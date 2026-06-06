@@ -1,4 +1,4 @@
-#include "cppbuild.h"
+#include "cppbuild.hpp"
 
 int main() {
   cppbuild::CompileCommand cmd{};

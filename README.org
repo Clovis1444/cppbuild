@@ -1,0 +1,14 @@
+#+title: Readme
+
+* Development
+
+To build and run *test.cpp* using ~cppbuild~ run:
+
+#+begin_src bash
+clang++ cppbuild.cpp -o cppbuild && ./cppbuild
+#+end_src
+
+#+begin_quote
+[!TIP]
+You are not restricted by using only clang. You can use any c++ compiler.
+#+end_quote
