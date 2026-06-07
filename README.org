@@ -1,4 +1,8 @@
-#+title: Readme
+#+title: cppbuild
+
+* Requirements
+
+- Any *c++* compiler with *c++17* support
 
 * Development
 
@@ -10,5 +14,5 @@ clang++ cppbuild.cpp -o cppbuild && ./cppbuild
 
 #+begin_quote
 [!TIP]
-You are not restricted by using only clang. You can use any c++ compiler.
+You are not restricted by using only clang. You can use any c++ compiler with *c++17* support.
 #+end_quote
