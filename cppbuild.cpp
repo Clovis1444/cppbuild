@@ -2,28 +2,20 @@
 
 int main() {
   cppbuild::CompileCommand cmd{};
-
   cmd.set_compiler_path("clang++");
-  cmd.set_compiler_sources({"test.cpp"});
-
-  std::set<std::string_view> c_args {
+  cmd.set_compiler_args({
     "-Wall",
     "-Wextra",
-  };
-  cmd.set_compiler_args(c_args);
-  cmd.add_compiler_arg("-Werror");
-  cmd.remove_compiler_arg("-Werror");
+    "-Wpedantic",
+    "-Werror",
+  });
+  cmd.set_compiler_sources({"test.cpp"});
+  cmd.set_target_name("test");
+  cmd.set_build_dir("build");
 
-  cmd.set_compiler_output("build/kefteme");
+  cmd.log_info();
 
-  if (!cppbuild::execute_command("rm -rf build && mkdir build")) {
-    return 1;
-  }
+  cmd.compile_and_run();
 
-  bool result{};
-  // result = cmd.compile();
-  // result = cmd.run();
-  result = cmd.compile_and_run();
-
-  return result?0:1;
+  return 0;
 }

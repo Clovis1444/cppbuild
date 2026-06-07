@@ -5,15 +5,21 @@
 #include <string>
 #include <string_view>
 #include <set>
+#include <filesystem>
 
 namespace cppbuild {
+
+#define VERSION "0.0.1"
+
+namespace fs = std::filesystem;
+
 enum class LogType {
   Info,
   Warning,
   Error,
 };
 
-static void log(LogType lt, std::string_view text) {
+static void log(LogType lt, std::string_view text, bool exit_on_error = true) {
   std::string_view prefix;
   switch (lt) {
   case LogType::Info:
@@ -28,6 +34,11 @@ static void log(LogType lt, std::string_view text) {
   }
 
   std::cout << prefix << text << std::endl;
+
+  // TODO(clovis): add exit_on_fail option
+  if (exit_on_error && lt == LogType::Error) {
+    std::exit(1);
+  }
 }
 
 // TODO(clovis): implement proper command execution
@@ -37,59 +48,95 @@ static void log(LogType lt, std::string_view text) {
 inline bool execute_command(std::string_view cmd) {
   log(LogType::Info, std::string{"Executing: "}.append(cmd));
   bool result {std::system(cmd.data()) == 0};
+
+  // TODO(clovis): add exit_on_fail option
+  if (!result) {
+    std::exit(1);
+  }
+
   return result;
 }
 
-// TODO(clovis): add build_dir_
-// TODO(clovis): add autoremove?
+// Returns true if directory was created or already existed.
+inline bool make_dir(const fs::path &dir_path) {
+  if (fs::exists(dir_path) && fs::is_directory(dir_path)) {
+    return true;
+  }
+
+  log(cppbuild::LogType::Info, std::string{"Creating directory: "}.append(dir_path));
+
+  if (fs::exists(dir_path) && !fs::is_directory(dir_path)) {
+    log(cppbuild::LogType::Error, std::string{dir_path}.append(": is not a directory"));
+    return false;
+  } else {
+    try {
+      fs::create_directory(dir_path);
+    } catch(const fs::filesystem_error& e) {
+      log(cppbuild::LogType::Error, std::string{dir_path}.append(": ").append(e.what()));
+      return false;
+    }
+  }
+  return true;
+}
+// Removes entry recursively if exists. Returns true if entry was removed or did not exist.
+inline bool rm_rf_if_exists(const fs::path &path) {
+  if (!fs::exists(path)) {
+    return true;
+  }
+
+  log(cppbuild::LogType::Info, std::string{"Removing: "}.append(path));
+
+  try {
+    fs::remove_all(path);
+  } catch (const fs::filesystem_error &e) {
+    log(cppbuild::LogType::Error, std::string{path}.append(": ").append(e.what()));
+    return false;
+  }
+
+  if (fs::exists(path)) {
+    log(cppbuild::LogType::Error, std::string{"Failed to remove "}.append(path));
+  }
+
+  return true;
+}
+
+// TODO(clovis): implement generating compile_commands.json using clang -MJ
 class CompileCommand {
 private:
   std::string_view c_path_{};
-  std::string_view c_output_{};
+  std::string_view target_name_{};
   std::set<std::string_view> c_args_{};
   std::set<std::string_view> c_sources_{};
+  std::string_view build_dir_{"build"};
 
 public:
+  /////////////////////////////////////GETTERS////////////////////////////////////
+
   std::string_view compiler_path() const { return c_path_; }
-  std::string_view compiler_output() const { return c_output_; }
+  std::string_view target_name() const { return target_name_; }
   std::set<std::string_view> compiler_args() const { return c_args_; }
   std::set<std::string_view> compiler_sources() const { return c_sources_; }
-
-  bool compile() const {
-    std::string cmd{c_path_};
-    cmd.append(" ");
-    for (auto source : compiler_sources()) {
-      cmd.append(source);
-      cmd.append(" ");
+  // Default value is "build".
+  fs::path build_dir() const {
+    fs::path b_dir{fs::weakly_canonical(build_dir_)};
+    if (b_dir.is_relative()){
+      b_dir = fs::current_path() / b_dir;
     }
-    // TODO(clovis): overload this container to easely convert it to string
-    for (auto arg : compiler_args()) {
-      cmd.append(arg);
-      cmd.append(" ");
-    }
-    cmd.append("-o ");
-    cmd.append(c_output_);
-
-    return execute_command(cmd);
+    return b_dir;
   }
+  // Returns build_dir() + target_name().
+  fs::path target_path() const { return build_dir().append(target_name()); }
 
-  bool run() const {
-    std::string cmd{"./"};
-    cmd.append(c_output_);
-    return execute_command(cmd);
-  }
+  ////////////////////////////////////////////////////////////////////////////////
 
-  bool compile_and_run() const {
-    if (!compile()) return false;
-    return run();
-  }
+  /////////////////////////////////////SETTERS////////////////////////////////////
 
   void set_compiler_path(std::string_view c_path) {
     c_path_ = c_path;
   }
 
-  void set_compiler_output(std::string_view c_output) {
-    c_output_ = c_output;
+  void set_target_name(std::string_view target_name) {
+    target_name_ = target_name;
   }
 
   void set_compiler_args(std::set<std::string_view> c_args) {
@@ -125,7 +172,83 @@ public:
   bool remove_compiler_source(std::string_view c_source) {
     return c_sources_.erase(c_source);
   }
-};
 
-inline void hello() { std::cout << "Hello from cppbuild!" << std::endl; }
+  void set_build_dir(std::string_view build_dir) {
+    build_dir_ = build_dir;
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////
+
+  bool compile() const {
+    if (compiler_path().empty()) {
+      log(cppbuild::LogType::Error, "Compiler is not set");
+      return false;
+    }
+    if (target_name().empty()) {
+      log(cppbuild::LogType::Error, "Target is not set");
+      return false;
+    }
+
+    // Build dir step
+    if (!fs::exists(build_dir())){
+      if(!make_build_dir()) {
+        return false;
+      }
+    }
+
+    // Compilation step
+    std::string cmd{c_path_};
+    cmd.append(" ");
+    for (auto source : compiler_sources()) {
+      cmd.append(source);
+      cmd.append(" ");
+    }
+    // TODO(clovis): overload this container to easely convert it to string
+    for (auto arg : compiler_args()) {
+      cmd.append(arg);
+      cmd.append(" ");
+    }
+    cmd.append("-o ");
+    cmd.append(target_path());
+
+    return execute_command(cmd);
+  }
+
+  bool run() const {
+    if (!fs::exists(target_path())) {
+      log(cppbuild::LogType::Error, std::string{target_path()}.append(" target does not exist"));
+      return false;
+    }
+
+    std::string cmd{target_path()};
+    return execute_command(cmd);
+  }
+
+  bool compile_and_run() const {
+    if (!compile()) return false;
+    return run();
+  }
+
+  // Returns true if build directory was created or already existed.
+  bool make_build_dir() const {
+    if (!make_dir(build_dir())) {
+      log(cppbuild::LogType::Error, std::string{build_dir()}.append(" failed to create build dir"));
+      return false;
+    }
+    return true;
+  }
+  bool clear_build_dir() const {
+    return rm_rf_if_exists(build_dir());
+  }
+
+  // Prints usefull info.
+  void log_info() const {
+    log(cppbuild::LogType::Info, std::string{"cppbuild v"}.append(VERSION));
+    log(cppbuild::LogType::Info, std::string{"Working directory: "}.append(fs::current_path()));
+    log(cppbuild::LogType::Info, std::string{"Build directory:   "}.append(build_dir()));
+    log(cppbuild::LogType::Info, std::string{"Target path:       "}.append(target_path()));
+    log(cppbuild::LogType::Info, std::string{"Compiler path:     "}.append(compiler_path()));
+    std::cout << std::endl;
+  }
+};
 } // namespace cppbuild
