@@ -9,11 +9,13 @@
 #include <set>
 #include <filesystem>
 
-namespace cppbuild {
+namespace Cppbuild {
 
 #define VERSION "0.0.1"
 
-namespace fs = std::filesystem;
+namespace Fs = std::filesystem;
+
+class Settings {};
 
 enum class LogType {
   Info,
@@ -35,7 +37,7 @@ static void log(LogType lt, std::string_view text, bool exit_on_error = true) {
     break;
   }
 
-  std::cout << prefix << text << std::endl;
+  std::cout << prefix << text << '\n' << std::flush;
 
   // TODO(clovis): add exit_on_fail option
   if (exit_on_error && lt == LogType::Error) {
@@ -47,7 +49,7 @@ static void log(LogType lt, std::string_view text, bool exit_on_error = true) {
 // TODO(clovis): add CommandResult enum
 // To execute command specific directory use 'cd <dir> && <cmd>'.
 // Returns true on success.
-inline bool do_execute_command(std::string_view cmd) {
+inline bool do_execute_command(const std::string& cmd) {
   log(LogType::Info, std::string{"Executing: "}.append(cmd));
   bool result {std::system(cmd.data()) == 0};
 
@@ -60,42 +62,43 @@ inline bool do_execute_command(std::string_view cmd) {
 }
 
 // Returns true if directory was created or already existed.
-inline bool do_make_dir(const fs::path &dir_path) {
-  if (fs::exists(dir_path) && fs::is_directory(dir_path)) {
+inline bool do_make_dir(const Fs::path &dir_path) {
+  if (Fs::exists(dir_path) && Fs::is_directory(dir_path)) {
     return true;
   }
 
   log(LogType::Info, std::string{"Creating directory: "}.append(dir_path));
 
-  if (fs::exists(dir_path) && !fs::is_directory(dir_path)) {
+  if (Fs::exists(dir_path) && !Fs::is_directory(dir_path)) {
     log(LogType::Error, std::string{dir_path}.append(": is not a directory"));
     return false;
-  } else {
-    try {
-      fs::create_directory(dir_path);
-    } catch(const fs::filesystem_error& e) {
+  }
+
+  try {
+      Fs::create_directory(dir_path);
+  } catch (const Fs::filesystem_error& e) {
       log(LogType::Error, std::string{dir_path}.append(": ").append(e.what()));
       return false;
-    }
   }
+
   return true;
 }
 // Removes entry recursively if exists. Returns true if entry was removed or did not exist.
-inline bool do_rm_rf_if_exists(const fs::path &path) {
-  if (!fs::exists(path)) {
+inline bool do_rm_rf_if_exists(const Fs::path &path) {
+  if (!Fs::exists(path)) {
     return true;
   }
 
   log(LogType::Info, std::string{"Removing: "}.append(path));
 
   try {
-    fs::remove_all(path);
-  } catch (const fs::filesystem_error &e) {
+    Fs::remove_all(path);
+  } catch (const Fs::filesystem_error &e) {
     log(LogType::Error, std::string{path}.append(": ").append(e.what()));
     return false;
   }
 
-  if (fs::exists(path)) {
+  if (Fs::exists(path)) {
     log(LogType::Error, std::string{"Failed to remove "}.append(path));
   }
 
@@ -105,10 +108,10 @@ inline bool do_rm_rf_if_exists(const fs::path &path) {
 // TODO(clovis): implement generating compile_commands.json using clang -MJ
 class CompileCommand {
 private:
-  std::string c_path_{};
-  std::string target_name_{};
-  std::set<std::string> c_args_{};
-  std::set<std::string> c_sources_{};
+  std::string c_path_;
+  std::string target_name_;
+  std::set<std::string> c_args_;
+  std::set<std::string> c_sources_;
   std::string build_dir_{"build"};
 
 public:
@@ -119,20 +122,20 @@ public:
   const std::set<std::string>& compiler_args() const { return c_args_; }
   const std::set<std::string>& compiler_sources() const { return c_sources_; }
   // Default value is "build".
-  fs::path build_dir() const {
+  Fs::path build_dir() const {
     if (build_dir_.empty()) {
       return working_dir();
     }
 
-    fs::path b_dir{fs::weakly_canonical(build_dir_)};
+    Fs::path b_dir{Fs::weakly_canonical(build_dir_)};
     if (b_dir.is_relative()){
       b_dir = working_dir() / b_dir;
     }
     return b_dir;
   }
-  fs::path working_dir() const { return fs::current_path(); }
+  static Fs::path working_dir()  { return Fs::current_path(); }
   // Returns build_dir() + target_name().
-  fs::path target_path() const { return build_dir().append(target_name()); }
+  Fs::path target_path() const { return build_dir().append(target_name()); }
 
   // Returns string containing current compile command. Do not performs any checks.
   std::string cmd_string() const {
@@ -179,7 +182,7 @@ public:
   }
   // Returns false if arg was not defined
   bool remove_compiler_arg(const std::string& c_arg) {
-    return c_args_.erase(c_arg);
+    return static_cast<bool>(c_args_.erase(c_arg));
   }
 
   void set_compiler_sources(const std::set<std::string>& c_sources) {
@@ -196,7 +199,7 @@ public:
   }
   // Returns false if source is not defined
   bool remove_compiler_source(const std::string& c_source) {
-    return c_sources_.erase(c_source);
+    return static_cast<bool>(c_sources_.erase(c_source));
   }
 
   void set_build_dir(std::string_view build_dir) {
@@ -217,7 +220,7 @@ public:
     }
 
     // Build dir step
-    if (!fs::exists(build_dir())){
+    if (!Fs::exists(build_dir())){
       if(!do_make_build_dir()) {
         return false;
       }
@@ -229,7 +232,7 @@ public:
   }
 
   bool do_run() const {
-    if (!fs::exists(target_path())) {
+    if (!Fs::exists(target_path())) {
       log(LogType::Error, std::string{target_path()}.append(" target does not exist"));
       return false;
     }
@@ -240,7 +243,10 @@ public:
 
   // do_compile() + do_run()
   bool do_compile_and_run() const {
-    if (!do_compile()) return false;
+    if (!do_compile()) {
+      return false;
+    }
+
     return do_run();
   }
 
@@ -263,7 +269,7 @@ public:
     log(LogType::Info, std::string{"Build directory:   "}.append(build_dir()));
     log(LogType::Info, std::string{"Target path:       "}.append(target_path()));
     log(LogType::Info, std::string{"Compiler path:     "}.append(compiler_path()));
-    std::cout << std::endl;
+    std::cout << '\n' << std::flush;
   }
 };
-} // namespace cppbuild
+}  // namespace Cppbuild
