@@ -134,6 +134,25 @@ public:
   // Returns build_dir() + target_name().
   fs::path target_path() const { return build_dir().append(target_name()); }
 
+  // Returns string containing current compile command. Do not performs any checks.
+  std::string cmd_string() const {
+    std::string cmd{compiler_path()};
+    cmd.append(" ");
+    for (const auto& source : compiler_sources()) {
+      cmd.append(source);
+      cmd.append(" ");
+    }
+    // TODO(clovis): overload this container to easely convert it to string
+    for (const auto& arg : compiler_args()) {
+      cmd.append(arg);
+      cmd.append(" ");
+    }
+    cmd.append("-o ");
+    cmd.append(target_path());
+
+    return cmd;
+  }
+
   ////////////////////////////////////////////////////////////////////////////////
 
   /////////////////////////////////////SETTERS////////////////////////////////////
@@ -205,20 +224,7 @@ public:
     }
 
     // Compilation step
-    std::string cmd{c_path_};
-    cmd.append(" ");
-    for (const auto& source : compiler_sources()) {
-      cmd.append(source);
-      cmd.append(" ");
-    }
-    // TODO(clovis): overload this container to easely convert it to string
-    for (const auto& arg : compiler_args()) {
-      cmd.append(arg);
-      cmd.append(" ");
-    }
-    cmd.append("-o ");
-    cmd.append(target_path());
-
+    std::string cmd{cmd_string()};
     return do_execute_command(cmd);
   }
 
