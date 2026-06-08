@@ -8,15 +8,55 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <mutex>
 #include <string_view>
 
 namespace Cppbuild {
 
-#define VERSION "0.0.1"
-
 namespace Fs = std::filesystem;
 
-class Settings {};
+// Collection of all setting entries.
+struct SettingsCollection {
+    std::string version{"0.0.1"};
+    bool exit_on_error{true};
+};
+// Global Settings class.
+class Settings {
+    public:
+    Settings(const Settings&) = delete;
+    Settings(Settings&&) = delete;
+    Settings& operator=(const Settings&) = delete;
+    Settings& operator=(Settings&&) = delete;
+
+    static std::string version() {
+        std::lock_guard lock{mtx_};
+        return sc_.version;
+    }
+    static bool exit_on_error() {
+        std::lock_guard lock{mtx_};
+        return sc_.exit_on_error;
+    }
+    static void set_exit_on_error(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.exit_on_error = val;
+    }
+
+    // Returns copy of a current SettingsCollection.
+    static SettingsCollection get_collection_copy() {
+        std::lock_guard lock{mtx_};
+        return sc_;
+    }
+    // Sets provided collection as current.
+    static void override(const SettingsCollection& sc) {
+        std::lock_guard lock{mtx_};
+        sc_ = sc;
+    }
+
+    private:
+    Settings() {}
+    inline static SettingsCollection sc_{};
+    inline static std::mutex mtx_{};
+};
 
 enum class LogType {
     Info,
@@ -24,7 +64,7 @@ enum class LogType {
     Error,
 };
 
-static void log(LogType lt, std::string_view text, bool exit_on_error = true) {
+static void log(LogType lt, std::string_view text, bool exit_on_error = Settings::exit_on_error()) {
     std::string_view prefix;
     switch (lt) {
         case LogType::Info:
@@ -40,7 +80,6 @@ static void log(LogType lt, std::string_view text, bool exit_on_error = true) {
 
     std::cout << prefix << text << '\n' << std::flush;
 
-    // TODO(clovis): add exit_on_fail option
     if (exit_on_error && lt == LogType::Error) {
         std::exit(1);
     }
@@ -54,8 +93,7 @@ inline bool do_execute_command(const std::string& cmd) {
     log(LogType::Info, std::string{"Executing: "}.append(cmd));
     bool result{std::system(cmd.data()) == 0};
 
-    // TODO(clovis): add exit_on_fail option
-    if (!result) {
+    if (!result && Settings::exit_on_error()) {
         std::exit(1);
     }
 
@@ -150,7 +188,6 @@ class CompileCommand {
             cmd.append(source);
             cmd.append(" ");
         }
-        // TODO(clovis): overload this container to easely convert it to string
         for (const auto& arg : compiler_args()) {
             cmd.append(arg);
             cmd.append(" ");
@@ -265,7 +302,7 @@ class CompileCommand {
 
     // Prints usefull info.
     void log_info() const {
-        log(LogType::Info, std::string{"cppbuild v"}.append(VERSION));
+        log(LogType::Info, std::string{"cppbuild v"}.append(Settings::version()));
         log(LogType::Info,
             std::string{"Working directory: "}.append(working_dir()));
         log(LogType::Info,
