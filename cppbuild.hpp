@@ -19,6 +19,7 @@ namespace Fs = std::filesystem;
 struct SettingsCollection {
     std::string version{"0.0.1"};
     bool exit_on_error{true};
+    bool not_idiot{false};
 };
 // Global Settings class.
 class Settings {
@@ -28,16 +29,37 @@ class Settings {
     Settings& operator=(const Settings&) = delete;
     Settings& operator=(Settings&&) = delete;
 
+    // Returns current cppbuild version.
     static std::string version() {
         std::lock_guard lock{mtx_};
         return sc_.version;
     }
+    // Returns whether build process interups after cppbuild::log() error call;
+    // Default value is "false".
+    // It is higly recommended to do not change it.
     static bool exit_on_error() {
         std::lock_guard lock{mtx_};
         return sc_.exit_on_error;
     }
+    // Do not mess around with this function.
     static void set_exit_on_error(bool val) {
         std::lock_guard lock{mtx_};
+
+        if (!val && !Settings::sc_.not_idiot) {
+            std::cout <<  "[cppbuild WARNING] "
+            << "It is higly unrecommended to change value of \"exit_on_error\".\n"
+            << "Any build process must be performed sequentially.\n"
+            << "Each build process step affects the next step.\n"
+            << "So if one step fails - the process should be interupted.\n\n"
+            << "For example, you can accidentally\n"
+            << "nuke your entire file system if you are not careful.\n\n"
+            << "Just do not do it. You probably do not need it.\n\n"
+            << "If you still want to do it - assure cppbuild you are not_idiot.\n"
+            << std::flush;
+
+            std::exit(0);
+        }
+
         sc_.exit_on_error = val;
     }
 
@@ -46,8 +68,8 @@ class Settings {
         std::lock_guard lock{mtx_};
         return sc_;
     }
-    // Sets provided collection as current.
-    static void override(const SettingsCollection& sc) {
+    // Sets provided collection as current SettingsCollection.
+    static void override_collection(const SettingsCollection& sc) {
         std::lock_guard lock{mtx_};
         sc_ = sc;
     }
@@ -101,7 +123,7 @@ inline bool do_execute_command(const std::string& cmd) {
 }
 
 // Returns true if directory was created or already existed.
-inline bool do_make_dir(const Fs::path& dir_path) {
+inline bool do_mkdir(const Fs::path& dir_path) {
     if (Fs::exists(dir_path) && Fs::is_directory(dir_path)) {
         return true;
     }
@@ -126,7 +148,7 @@ inline bool do_make_dir(const Fs::path& dir_path) {
 }
 // Removes entry recursively if exists. Returns true if entry was removed or did
 // not exist.
-inline bool do_rm_rf_if_exists(const Fs::path& path) {
+inline bool do_rm(const Fs::path& path) {
     if (!Fs::exists(path)) {
         return true;
     }
@@ -142,6 +164,24 @@ inline bool do_rm_rf_if_exists(const Fs::path& path) {
 
     if (Fs::exists(path)) {
         log(LogType::Error, std::string{"Failed to remove "}.append(path));
+    }
+
+    return true;
+}
+
+// Returns current working directory.
+inline Fs::path working_dir() { return Fs::current_path(); }
+
+// Changes current working directory. Same as "cd" command.
+// Returns true on success.
+inline bool do_cd(const Fs::path& path) {
+    log(LogType::Info, std::string{"Changing working directory to: "}.append(path));
+    try {
+        Fs::current_path(path);
+    } catch(const Fs::filesystem_error& e) {
+        log(LogType::Error, std::string{"Failed to change working dir to "}
+        .append(path).append(": ").append(e.what()));
+        return false;
     }
 
     return true;
@@ -175,7 +215,6 @@ class CompileCommand {
         }
         return b_dir;
     }
-    static Fs::path working_dir() { return Fs::current_path(); }
     // Returns build_dir() + target_name().
     Fs::path target_path() const { return build_dir().append(target_name()); }
 
@@ -264,12 +303,18 @@ class CompileCommand {
             }
         }
 
+        log(LogType::Info,
+            std::string{"Compiling target: "}.append(target_name()));
+
         // Compilation step
         std::string cmd{cmd_string()};
         return do_execute_command(cmd);
     }
 
     bool do_run() const {
+        log(LogType::Info,
+            std::string{"Running target: "}.append(target_path()));
+
         if (!Fs::exists(target_path())) {
             log(LogType::Error,
                 std::string{target_path()}.append(" target does not exist"));
@@ -291,14 +336,14 @@ class CompileCommand {
 
     // Returns true if build directory was created or already existed.
     bool do_make_build_dir() const {
-        if (!do_make_dir(build_dir())) {
+        if (!do_mkdir(build_dir())) {
             log(LogType::Error,
                 std::string{build_dir()}.append(" failed to create build dir"));
             return false;
         }
         return true;
     }
-    bool do_clear_build_dir() const { return do_rm_rf_if_exists(build_dir()); }
+    bool do_clear_build_dir() const { return do_rm(build_dir()); }
 
     // Prints usefull info.
     void log_info() const {
