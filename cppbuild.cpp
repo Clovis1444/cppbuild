@@ -15,7 +15,7 @@ int main() {
 
   cmd.log_info();
 
-  cmd.compile_and_run();
+  cmd.do_compile_and_run();
 
   return 0;
 }

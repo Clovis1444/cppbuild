@@ -1,3 +1,5 @@
+// NOTE: all functions prefixed with "do_" have side effects(may modify filesystem/execute shell commands).
+
 #pragma once
 
 #include <cstdlib>
@@ -45,7 +47,7 @@ static void log(LogType lt, std::string_view text, bool exit_on_error = true) {
 // TODO(clovis): add CommandResult enum
 // To execute command specific directory use 'cd <dir> && <cmd>'.
 // Returns true on success.
-inline bool execute_command(std::string_view cmd) {
+inline bool do_execute_command(std::string_view cmd) {
   log(LogType::Info, std::string{"Executing: "}.append(cmd));
   bool result {std::system(cmd.data()) == 0};
 
@@ -58,7 +60,7 @@ inline bool execute_command(std::string_view cmd) {
 }
 
 // Returns true if directory was created or already existed.
-inline bool make_dir(const fs::path &dir_path) {
+inline bool do_make_dir(const fs::path &dir_path) {
   if (fs::exists(dir_path) && fs::is_directory(dir_path)) {
     return true;
   }
@@ -79,7 +81,7 @@ inline bool make_dir(const fs::path &dir_path) {
   return true;
 }
 // Removes entry recursively if exists. Returns true if entry was removed or did not exist.
-inline bool rm_rf_if_exists(const fs::path &path) {
+inline bool do_rm_rf_if_exists(const fs::path &path) {
   if (!fs::exists(path)) {
     return true;
   }
@@ -184,7 +186,8 @@ public:
 
   ////////////////////////////////////////////////////////////////////////////////
 
-  bool compile() const {
+  // Creates build directory and executes compile command
+  bool do_compile() const {
     if (compiler_path().empty()) {
       log(LogType::Error, "Compiler is not set");
       return false;
@@ -196,7 +199,7 @@ public:
 
     // Build dir step
     if (!fs::exists(build_dir())){
-      if(!make_build_dir()) {
+      if(!do_make_build_dir()) {
         return false;
       }
     }
@@ -216,34 +219,35 @@ public:
     cmd.append("-o ");
     cmd.append(target_path());
 
-    return execute_command(cmd);
+    return do_execute_command(cmd);
   }
 
-  bool run() const {
+  bool do_run() const {
     if (!fs::exists(target_path())) {
       log(LogType::Error, std::string{target_path()}.append(" target does not exist"));
       return false;
     }
 
     std::string cmd{target_path()};
-    return execute_command(cmd);
+    return do_execute_command(cmd);
   }
 
-  bool compile_and_run() const {
-    if (!compile()) return false;
-    return run();
+  // do_compile() + do_run()
+  bool do_compile_and_run() const {
+    if (!do_compile()) return false;
+    return do_run();
   }
 
   // Returns true if build directory was created or already existed.
-  bool make_build_dir() const {
-    if (!make_dir(build_dir())) {
+  bool do_make_build_dir() const {
+    if (!do_make_dir(build_dir())) {
       log(LogType::Error, std::string{build_dir()}.append(" failed to create build dir"));
       return false;
     }
     return true;
   }
-  bool clear_build_dir() const {
-    return rm_rf_if_exists(build_dir());
+  bool do_clear_build_dir() const {
+    return do_rm_rf_if_exists(build_dir());
   }
 
   // Prints usefull info.
