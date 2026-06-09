@@ -15,6 +15,9 @@ namespace Cppbuild {
 
 namespace Fs = std::filesystem;
 
+using CompilerArgs = std::set<std::string>;
+using CompilerSources = std::set<std::string>;
+
 // Collection of all setting entries.
 struct SettingsCollection {
     std::string version{"0.0.1"};
@@ -189,20 +192,16 @@ inline bool do_cd(const Fs::path& path) {
 
 // TODO(clovis): implement generating compile_commands.json using clang -MJ
 class CompileCommand {
-   private:
-    std::string c_path_;
-    std::string target_name_;
-    std::set<std::string> c_args_;
-    std::set<std::string> c_sources_;
-    std::string build_dir_{"build"};
-
    public:
+    CompileCommand() = default;
+
+
     /////////////////////////////////////GETTERS////////////////////////////////////
 
-    const std::string& compiler_path() const { return c_path_; }
+    const std::string& compiler() const { return c_path_; }
     const std::string& target_name() const { return target_name_; }
-    const std::set<std::string>& compiler_args() const { return c_args_; }
-    const std::set<std::string>& compiler_sources() const { return c_sources_; }
+    const CompilerArgs& compiler_args() const { return c_args_; }
+    const CompilerSources& compiler_sources() const { return c_sources_; }
     // Default value is "build".
     Fs::path build_dir() const {
         if (build_dir_.empty()) {
@@ -221,7 +220,7 @@ class CompileCommand {
     // Returns string containing current compile command.
     // Do not performs any checks.
     std::string cmd_string() const {
-        std::string cmd{compiler_path()};
+        std::string cmd{compiler()};
         cmd.append(" ");
         for (const auto& source : compiler_sources()) {
             cmd.append(source);
@@ -241,13 +240,13 @@ class CompileCommand {
 
     /////////////////////////////////////SETTERS////////////////////////////////////
 
-    void set_compiler_path(std::string_view c_path) { c_path_ = c_path; }
+    void set_compiler(std::string_view c_path) { c_path_ = c_path; }
 
     void set_target_name(std::string_view target_name) {
         target_name_ = target_name;
     }
 
-    void set_compiler_args(const std::set<std::string>& c_args) {
+    void set_compiler_args(const CompilerArgs& c_args) {
         c_args_ = c_args;
     }
     // Returns false if arg already defined
@@ -264,7 +263,7 @@ class CompileCommand {
         return static_cast<bool>(c_args_.erase(c_arg));
     }
 
-    void set_compiler_sources(const std::set<std::string>& c_sources) {
+    void set_compiler_sources(const CompilerSources& c_sources) {
         c_sources_ = c_sources;
     }
     // Returns false if source already defined
@@ -287,7 +286,7 @@ class CompileCommand {
 
     // Creates build directory and executes compile command
     bool do_compile() const {
-        if (compiler_path().empty()) {
+        if (compiler().empty()) {
             log(LogType::Error, "Compiler is not set");
             return false;
         }
@@ -355,8 +354,15 @@ class CompileCommand {
         log(LogType::Info,
             std::string{"Target path:       "}.append(target_path()));
         log(LogType::Info,
-            std::string{"Compiler path:     "}.append(compiler_path()));
+            std::string{"Compiler path:     "}.append(compiler()));
         std::cout << '\n' << std::flush;
     }
+
+   private:
+    std::string c_path_;
+    std::string target_name_;
+    CompilerArgs c_args_;
+    CompilerSources c_sources_;
+    std::string build_dir_{"build"};
 };
 }  // namespace Cppbuild

@@ -2,7 +2,7 @@
 
 int main() {
     Cppbuild::CompileCommand cmd{};
-    cmd.set_compiler_path("clang++");
+    cmd.set_compiler("clang++");
     cmd.set_compiler_args({
         "-Wall",
         "-Wextra",
