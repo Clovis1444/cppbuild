@@ -23,6 +23,8 @@ struct SettingsCollection {
     std::string version{"0.0.1"};
     bool exit_on_error{true};
     bool not_idiot{false};
+    bool display_info{true};
+    bool display_warn{true};
 };
 // Global Settings class.
 class Settings {
@@ -65,6 +67,24 @@ class Settings {
 
         sc_.exit_on_error = val;
     }
+    // Returns if info logs will be displayed.
+    static bool display_info() {
+        std::lock_guard lock{mtx_};
+        return sc_.display_info;
+    }
+    static void set_display_info(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.display_info = val;
+    }
+    // Returns if warning logs will be displayed.
+    static bool display_warn() {
+        std::lock_guard lock{mtx_};
+        return sc_.display_warn;
+    }
+    static void set_display_warn(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.display_warn = val;
+    }
 
     // Returns copy of a current SettingsCollection.
     static SettingsCollection get_collection_copy() {
@@ -89,7 +109,15 @@ enum class LogType {
     Error,
 };
 
-static void log(LogType lt, std::string_view text, bool exit_on_error = Settings::exit_on_error()) {
+// If "force" is true - log will be displayed regardless of the setting.
+// Error logs will always be displayed.
+static void log(LogType lt, std::string_view text, bool force = false) {
+    bool do_not_display_info {!force && lt == LogType::Info && !Settings::display_info()};
+    bool do_not_display_warn {!force && lt == LogType::Info && !Settings::display_warn()};
+    if (do_not_display_info || do_not_display_warn ) {
+        return;
+    }
+
     std::string_view prefix;
     switch (lt) {
         case LogType::Info:
@@ -105,7 +133,7 @@ static void log(LogType lt, std::string_view text, bool exit_on_error = Settings
 
     std::cout << prefix << text << '\n' << std::flush;
 
-    if (exit_on_error && lt == LogType::Error) {
+    if (Settings::exit_on_error() && lt == LogType::Error) {
         std::exit(1);
     }
 }
