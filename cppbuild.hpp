@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -12,6 +13,12 @@
 #include <string_view>
 
 namespace Cppbuild {
+
+// TODO(clovis): check if this works on windows
+#if defined(_WIN32) || defined(_WIN64)
+inline FILE* ppopen(const char* cmd, const char* modes) { return _popen(cmd, mode); }
+inline int   ppclose(FILE* f) { return _pclose(f); }
+#endif
 
 namespace Fs = std::filesystem;
 
@@ -138,9 +145,40 @@ static void log(LogType lt, std::string_view text, bool force = false) {
     }
 }
 
+// Same as do_execute_command() but does not terminate of fail.
+// Returns true on success.
+inline bool do_execute_command_weak(const std::string& cmd) {
+    // TODO(clovis): finish implementing this function.
+    // Currently it works exactly as do_execute_command()
+    FILE* f{popen(cmd.data(), "r")};
+    if (f == nullptr) {
+        Cppbuild::log(Cppbuild::LogType::Error, "popen() failed");
+        return false;
+    }
+
+    const size_t line_buff_size{512};
+    std::array<char, line_buff_size> line_buff{};
+    // Get cmd output
+    std::string cmd_output{};
+
+    while (std::fgets(line_buff.data(), line_buff.max_size(), f) != nullptr) {
+        cmd_output.append(line_buff.data());
+    }
+
+    // Print cmd output
+    std::cout << cmd_output;
+
+    // Get cmd exit code
+    int exit_status{pclose(f)};
+    int exit_code{WEXITSTATUS(exit_status)};
+
+    std::cout << "Exit code: " << exit_code << std::flush;
+
+    return true;
+}
 // TODO(clovis): implement proper command execution
 // TODO(clovis): add CommandResult enum
-// To execute command specific directory use 'cd <dir> && <cmd>'.
+// Executes command in system shell.
 // Returns true on success.
 inline bool do_execute_command(const std::string& cmd) {
     log(LogType::Info, std::string{"Executing: "}.append(cmd));
