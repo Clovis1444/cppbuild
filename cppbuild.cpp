@@ -23,7 +23,7 @@ int main() {
     }
 
     if (example_task) {
-        Cppbuild::log(Cppbuild::LogType::Info, std::string{"RUNNING BUILD TASK AT: "}.append(Cppbuild::working_dir()));
+        Cppbuild::log_i(std::string{"RUNNING BUILD TASK AT: "}.append(Cppbuild::working_dir()));
         Cppbuild::do_cd("example");
         cmd.do_compile_and_run();
         Cppbuild::do_cd(root);

@@ -3,7 +3,6 @@
 //
 // TODO(clovis): add timer functionality
 // TODO(clovis): implement generating compile_commands.json using clang -MJ
-// TODO(clovis): implement better logging
 
 #pragma once
 
@@ -149,11 +148,11 @@ enum class LogType {
     Error,
 };
 
-// If "force" is true - log will be displayed regardless of the setting.
-// Error logs will always be displayed.
-static void log(LogType lt, std::string_view text, bool force = false) {
-    bool do_not_display_info {!force && lt == LogType::Info && !Settings::display_info()};
-    bool do_not_display_warn {!force && lt == LogType::Info && !Settings::display_warn()};
+// If "force_display" is true - log will be displayed regardless of the setting.
+// Error log will always be displayed.
+static void log(LogType lt, std::string_view text, bool force_display = false) {
+    bool do_not_display_info {!force_display && lt == LogType::Info && !Settings::display_info()};
+    bool do_not_display_warn {!force_display && lt == LogType::Info && !Settings::display_warn()};
     if (do_not_display_info || do_not_display_warn ) {
         return;
     }
@@ -177,14 +176,26 @@ static void log(LogType lt, std::string_view text, bool force = false) {
         std::exit(1);
     }
 }
+// Same as log(LogType::Info, ...)
+static void log_i(std::string_view text, bool force_display = false) {
+    log(LogType::Info, text, force_display);
+}
+// Same as log(LogType::Warning, ...)
+static void log_w(std::string_view text, bool force_display = false) {
+    log(LogType::Warning, text, force_display);
+}
+// Same as log(LogType::Error, ...)
+static void log_e(std::string_view text, bool force_display = false) {
+    log(LogType::Error, text, force_display);
+}
 
 // Same as do_execute_command() but does not terminate on failure.
 inline Result do_execute_command_weak(const std::string& cmd) {
-    log(LogType::Info, "Executing: " + cmd);
+    log_i("Executing: " + cmd);
 
     FILE* f{popen(cmd.data(), "r")};
     if (f == nullptr) {
-        Cppbuild::log(Cppbuild::LogType::Error, "popen() failed");
+        Cppbuild::log_e("popen() failed");
         return Result::failure();
     }
 
@@ -211,8 +222,7 @@ inline Result do_execute_command(const std::string& cmd) {
     Result result{do_execute_command_weak(cmd)};
 
     if (result.is_failure()) {
-        Cppbuild::log(Cppbuild::LogType::Error,
-                      cmd + ": command failed with exit code "
+        Cppbuild::log_e(cmd + ": command failed with exit code "
                       + std::to_string(result.exit_code()));
     }
 
@@ -225,19 +235,17 @@ inline Result do_mkdir(const Fs::path& dir_path) {
         return Result::success();
     }
 
-    log(LogType::Info, std::string{"Creating directory: "}.append(dir_path));
+    log_i(std::string{"Creating directory: "}.append(dir_path));
 
     if (Fs::exists(dir_path) && !Fs::is_directory(dir_path)) {
-        log(LogType::Error,
-            std::string{dir_path}.append(": is not a directory"));
+        log_e(std::string{dir_path}.append(": is not a directory"));
         return Result::failure();
     }
 
     try {
         Fs::create_directory(dir_path);
     } catch (const Fs::filesystem_error& e) {
-        log(LogType::Error,
-            std::string{dir_path}.append(": ").append(e.what()));
+        log_e(std::string{dir_path}.append(": ").append(e.what()));
         return Result::failure();
     }
 
@@ -250,17 +258,17 @@ inline Result do_rm(const Fs::path& path) {
         return Result::success();
     }
 
-    log(LogType::Info, std::string{"Removing: "}.append(path));
+    log_i(std::string{"Removing: "}.append(path));
 
     try {
         Fs::remove_all(path);
     } catch (const Fs::filesystem_error& e) {
-        log(LogType::Error, std::string{path}.append(": ").append(e.what()));
+        log_e(std::string{path}.append(": ").append(e.what()));
         return Result::failure();
     }
 
     if (Fs::exists(path)) {
-        log(LogType::Error, std::string{"Failed to remove "}.append(path));
+        log_e(std::string{"Failed to remove "}.append(path));
     }
 
     return Result::success();
@@ -272,11 +280,11 @@ inline Fs::path working_dir() { return Fs::current_path(); }
 // Changes current working directory. Same as "cd" command.
 // Returns true on success.
 inline Result do_cd(const Fs::path& path) {
-    log(LogType::Info, std::string{"Changing working directory to: "}.append(path));
+    log_i(std::string{"Changing working directory to: "}.append(path));
     try {
         Fs::current_path(path);
     } catch(const Fs::filesystem_error& e) {
-        log(LogType::Error, std::string{"Failed to change working dir to "}
+        log_e(std::string{"Failed to change working dir to "}
         .append(path).append(": ").append(e.what()));
         return Result::failure();
     }
@@ -380,11 +388,11 @@ class CompileCommand {
     // Creates build directory and executes compile command
     Result do_compile() const {
         if (compiler().empty()) {
-            log(LogType::Error, "Compiler is not set");
+            log_e("Compiler is not set");
             return Result::failure();
         }
         if (target_name().empty()) {
-            log(LogType::Error, "Target is not set");
+            log_e("Target is not set");
             return Result::failure();
         }
 
@@ -396,8 +404,7 @@ class CompileCommand {
             }
         }
 
-        log(LogType::Info,
-            std::string{"Compiling target: "}.append(target_name()));
+        log_i(std::string{"Compiling target: "}.append(target_name()));
 
         // Compilation step
         std::string cmd{cmd_string()};
@@ -405,12 +412,10 @@ class CompileCommand {
     }
 
     Result do_run() const {
-        log(LogType::Info,
-            std::string{"Running target: "}.append(target_path()));
+        log_i(std::string{"Running target: "}.append(target_path()));
 
         if (!Fs::exists(target_path())) {
-            log(LogType::Error,
-                std::string{target_path()}.append(" target does not exist"));
+            log_e(std::string{target_path()}.append(" target does not exist"));
             return Result::failure();
         }
 
@@ -434,15 +439,11 @@ class CompileCommand {
 
     // Prints usefull info.
     void log_info() const {
-        log(LogType::Info, std::string{"cppbuild v"}.append(Settings::version()));
-        log(LogType::Info,
-            std::string{"Working directory: "}.append(working_dir()));
-        log(LogType::Info,
-            std::string{"Build directory:   "}.append(build_dir()));
-        log(LogType::Info,
-            std::string{"Target path:       "}.append(target_path()));
-        log(LogType::Info,
-            std::string{"Compiler path:     "}.append(compiler()));
+        log_i(std::string{"cppbuild v"}.append(Settings::version()));
+        log_i(std::string{"Working directory: "}.append(working_dir()));
+        log_i(std::string{"Build directory:   "}.append(build_dir()));
+        log_i(std::string{"Target path:       "}.append(target_path()));
+        log_i(std::string{"Compiler path:     "}.append(compiler()));
         std::cout << '\n' << std::flush;
     }
 
