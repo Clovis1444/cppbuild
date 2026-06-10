@@ -1,5 +1,9 @@
 // NOTE: all functions prefixed with "do_" have side effects(may modify
 // filesystem/execute shell commands).
+//
+// TODO(clovis): add timer functionality
+// TODO(clovis): implement generating compile_commands.json using clang -MJ
+// TODO(clovis): implement better logging
 
 #pragma once
 
@@ -24,6 +28,35 @@ namespace Fs = std::filesystem;
 
 using CompilerArgs = std::set<std::string>;
 using CompilerSources = std::set<std::string>;
+
+// Represents shell command execution result.
+class Result {
+public:
+    explicit Result(int exit_code) :exit_code_{exit_code} {}
+    explicit Result(bool success) :exit_code_{success?kSuccess:kFailure} {}
+
+    explicit operator int() const { return exit_code_; }
+    explicit operator bool() const { return is_ok(); }
+
+    // Returns Result with kSuccess exit_code.
+    static Result success() { return Result{kSuccess}; }
+    // Returns Result with kFailure exit_code.
+    static Result failure() { return Result{kFailure}; }
+
+    int exit_code() const { return exit_code_; }
+    // Returns if result is success. Returns false otherwise.
+    bool is_ok() const { return exit_code_ == kSuccess; }
+    // Returns true if exit code is equal to kSuccess
+    bool is_success() const { return is_ok(); }
+    // Returns true if exit code is equal to kFailure
+    bool is_failure() const { return !is_ok(); }
+
+    static constexpr int kSuccess{EXIT_SUCCESS};
+    static constexpr int kFailure{EXIT_FAILURE};
+private:
+    int exit_code_;
+};
+
 
 // Collection of all setting entries.
 struct SettingsCollection {
@@ -145,15 +178,14 @@ static void log(LogType lt, std::string_view text, bool force = false) {
     }
 }
 
-// Same as do_execute_command() but does not terminate of fail.
-// Returns true on success.
-inline bool do_execute_command_weak(const std::string& cmd) {
-    // TODO(clovis): finish implementing this function.
-    // Currently it works exactly as do_execute_command()
+// Same as do_execute_command() but does not terminate on failure.
+inline Result do_execute_command_weak(const std::string& cmd) {
+    log(LogType::Info, "Executing: " + cmd);
+
     FILE* f{popen(cmd.data(), "r")};
     if (f == nullptr) {
         Cppbuild::log(Cppbuild::LogType::Error, "popen() failed");
-        return false;
+        return Result::failure();
     }
 
     const size_t line_buff_size{512};
@@ -172,29 +204,25 @@ inline bool do_execute_command_weak(const std::string& cmd) {
     int exit_status{pclose(f)};
     int exit_code{WEXITSTATUS(exit_status)};
 
-    std::cout << "Exit code: " << exit_code << std::flush;
-
-    return true;
+    return Result{exit_code};
 }
-// TODO(clovis): implement proper command execution
-// TODO(clovis): add CommandResult enum
 // Executes command in system shell.
-// Returns true on success.
-inline bool do_execute_command(const std::string& cmd) {
-    log(LogType::Info, std::string{"Executing: "}.append(cmd));
-    bool result{std::system(cmd.data()) == 0};
+inline Result do_execute_command(const std::string& cmd) {
+    Result result{do_execute_command_weak(cmd)};
 
-    if (!result && Settings::exit_on_error()) {
-        std::exit(1);
+    if (result.is_failure()) {
+        Cppbuild::log(Cppbuild::LogType::Error,
+                      cmd + ": command failed with exit code "
+                      + std::to_string(result.exit_code()));
     }
 
     return result;
 }
 
-// Returns true if directory was created or already existed.
-inline bool do_mkdir(const Fs::path& dir_path) {
+// Returns Result::success() if directory was created or already exist.
+inline Result do_mkdir(const Fs::path& dir_path) {
     if (Fs::exists(dir_path) && Fs::is_directory(dir_path)) {
-        return true;
+        return Result::success();
     }
 
     log(LogType::Info, std::string{"Creating directory: "}.append(dir_path));
@@ -202,7 +230,7 @@ inline bool do_mkdir(const Fs::path& dir_path) {
     if (Fs::exists(dir_path) && !Fs::is_directory(dir_path)) {
         log(LogType::Error,
             std::string{dir_path}.append(": is not a directory"));
-        return false;
+        return Result::failure();
     }
 
     try {
@@ -210,16 +238,16 @@ inline bool do_mkdir(const Fs::path& dir_path) {
     } catch (const Fs::filesystem_error& e) {
         log(LogType::Error,
             std::string{dir_path}.append(": ").append(e.what()));
-        return false;
+        return Result::failure();
     }
 
-    return true;
+    return Result::success();
 }
 // Removes entry recursively if exists. Returns true if entry was removed or did
 // not exist.
-inline bool do_rm(const Fs::path& path) {
+inline Result do_rm(const Fs::path& path) {
     if (!Fs::exists(path)) {
-        return true;
+        return Result::success();
     }
 
     log(LogType::Info, std::string{"Removing: "}.append(path));
@@ -228,14 +256,14 @@ inline bool do_rm(const Fs::path& path) {
         Fs::remove_all(path);
     } catch (const Fs::filesystem_error& e) {
         log(LogType::Error, std::string{path}.append(": ").append(e.what()));
-        return false;
+        return Result::failure();
     }
 
     if (Fs::exists(path)) {
         log(LogType::Error, std::string{"Failed to remove "}.append(path));
     }
 
-    return true;
+    return Result::success();
 }
 
 // Returns current working directory.
@@ -243,20 +271,19 @@ inline Fs::path working_dir() { return Fs::current_path(); }
 
 // Changes current working directory. Same as "cd" command.
 // Returns true on success.
-inline bool do_cd(const Fs::path& path) {
+inline Result do_cd(const Fs::path& path) {
     log(LogType::Info, std::string{"Changing working directory to: "}.append(path));
     try {
         Fs::current_path(path);
     } catch(const Fs::filesystem_error& e) {
         log(LogType::Error, std::string{"Failed to change working dir to "}
         .append(path).append(": ").append(e.what()));
-        return false;
+        return Result::failure();
     }
 
-    return true;
+    return Result::success();
 }
 
-// TODO(clovis): implement generating compile_commands.json using clang -MJ
 class CompileCommand {
    public:
     CompileCommand() = default;
@@ -351,20 +378,21 @@ class CompileCommand {
     ////////////////////////////////////////////////////////////////////////////////
 
     // Creates build directory and executes compile command
-    bool do_compile() const {
+    Result do_compile() const {
         if (compiler().empty()) {
             log(LogType::Error, "Compiler is not set");
-            return false;
+            return Result::failure();
         }
         if (target_name().empty()) {
             log(LogType::Error, "Target is not set");
-            return false;
+            return Result::failure();
         }
 
         // Build dir step
         if (!Fs::exists(build_dir())) {
-            if (!do_make_build_dir()) {
-                return false;
+            Result r{do_make_build_dir()};
+            if (r.is_failure()) {
+                return r;
             }
         }
 
@@ -376,14 +404,14 @@ class CompileCommand {
         return do_execute_command(cmd);
     }
 
-    bool do_run() const {
+    Result do_run() const {
         log(LogType::Info,
             std::string{"Running target: "}.append(target_path()));
 
         if (!Fs::exists(target_path())) {
             log(LogType::Error,
                 std::string{target_path()}.append(" target does not exist"));
-            return false;
+            return Result::failure();
         }
 
         std::string cmd{target_path()};
@@ -391,24 +419,18 @@ class CompileCommand {
     }
 
     // do_compile() + do_run()
-    bool do_compile_and_run() const {
+    Result do_compile_and_run() const {
         if (!do_compile()) {
-            return false;
+            return Result::failure();
         }
 
         return do_run();
     }
 
-    // Returns true if build directory was created or already existed.
-    bool do_make_build_dir() const {
-        if (!do_mkdir(build_dir())) {
-            log(LogType::Error,
-                std::string{build_dir()}.append(" failed to create build dir"));
-            return false;
-        }
-        return true;
-    }
-    bool do_clear_build_dir() const { return do_rm(build_dir()); }
+    // Returns Result::success() if build directory was created or already exist.
+    Result do_make_build_dir() const { return do_mkdir(build_dir()); }
+    // Returns Result::success() if build directory was removed or did not exist.
+    Result do_clear_build_dir() const { return do_rm(build_dir()); }
 
     // Prints usefull info.
     void log_info() const {
