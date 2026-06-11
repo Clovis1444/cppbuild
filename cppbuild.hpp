@@ -32,7 +32,13 @@ using CompilerSources = std::set<std::string>;
 class Result {
 public:
     explicit Result(int exit_code) :exit_code_{exit_code} {}
+    Result(int exit_code, std::string_view output) :Result{exit_code} {
+        output_ = output;
+    }
     explicit Result(bool success) :exit_code_{success?kSuccess:kFailure} {}
+    Result(bool success, std::string_view output) :Result{success} {
+        output_ = output;
+    }
 
     explicit operator int() const { return exit_code_; }
     explicit operator bool() const { return is_ok(); }
@@ -50,10 +56,14 @@ public:
     // Returns true if exit code is equal to kFailure
     bool is_failure() const { return !is_ok(); }
 
+    // Returns command output if there is any.
+    std::string output() const { return output_; }
+
     static constexpr int kSuccess{EXIT_SUCCESS};
     static constexpr int kFailure{EXIT_FAILURE};
 private:
     int exit_code_;
+    std::string output_;
 };
 
 
@@ -189,8 +199,9 @@ static void log_e(std::string_view text, bool force_display = false) {
     log(LogType::Error, text, force_display);
 }
 
-// Same as do_execute_command() but does not terminate on failure.
-inline Result do_execute_command_weak(const std::string& cmd) {
+// Executes command in system shell, throws an error on failure.
+// If "silent" is true does not print command output.
+inline Result do_execute_command_weak(const std::string& cmd, bool silent = false) {
     log_i("Executing: " + cmd);
 
     FILE* f{popen(cmd.data(), "r")};
@@ -209,17 +220,20 @@ inline Result do_execute_command_weak(const std::string& cmd) {
     }
 
     // Print cmd output
-    std::cout << cmd_output;
+    if (!silent) {
+        std::cout << cmd_output;
+    }
 
     // Get cmd exit code
     int exit_status{pclose(f)};
     int exit_code{WEXITSTATUS(exit_status)};
 
-    return Result{exit_code};
+    return Result{exit_code, cmd_output};
 }
-// Executes command in system shell.
-inline Result do_execute_command(const std::string& cmd) {
-    Result result{do_execute_command_weak(cmd)};
+// Executes command in system shell. Does not throw an error on failure.
+// If "silent" is true does not print command output.
+inline Result do_execute_command(const std::string& cmd, bool silent = false) {
+    Result result{do_execute_command_weak(cmd, silent)};
 
     if (result.is_failure()) {
         Cppbuild::log_e(cmd + ": command failed with exit code "
