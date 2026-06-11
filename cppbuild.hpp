@@ -200,9 +200,11 @@ static void log_e(std::string_view text, bool force_display = false) {
 }
 
 // Executes command in system shell, throws an error on failure.
-// If "silent" is true does not print command output.
+// If "silent" is true - command will be executed without printing any output.
 inline Result do_execute_command_weak(const std::string& cmd, bool silent = false) {
-    log_i("Executing: " + cmd);
+    if (!silent) {
+        log_i("Executing: " + cmd);
+    }
 
     FILE* f{popen(cmd.data(), "r")};
     if (f == nullptr) {
@@ -231,7 +233,7 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
     return Result{exit_code, cmd_output};
 }
 // Executes command in system shell. Does not throw an error on failure.
-// If "silent" is true does not print command output.
+// If "silent" is true - command will be executed without printing any output.
 inline Result do_execute_command(const std::string& cmd, bool silent = false) {
     Result result{do_execute_command_weak(cmd, silent)};
 
