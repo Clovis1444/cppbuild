@@ -206,6 +206,7 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
         log_i("Executing: " + cmd);
     }
 
+    // TODO(clovis): popen() always poops cmd error into the output
     FILE* f{popen(cmd.data(), "r")};
     if (f == nullptr) {
         Cppbuild::log_e("popen() failed");
@@ -308,6 +309,33 @@ inline Result do_cd(const Fs::path& path) {
     return Result::success();
 }
 
+// Returns CFLAGS and linker flags for specified package.
+// Throws error on failure.
+// pkgconf must be installed.
+inline std::string do_get_package_args(std::string_view package) {
+    // TODO(clovis): add msvc support using --msvc-syntax
+    std::string cmd{"pkgconf --cflags --libs "};
+    cmd.append(package);
+
+    Result r{do_execute_command(cmd, true)};
+    if (r.is_failure()) {
+        return {};
+    }
+
+    std::string p_args{r.output()};
+    // Remove newlines from command output
+    for (auto it{p_args.begin()}; it != p_args.end();) {
+        if (*it == '\n' || *it == '\r') {
+            it = p_args.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    return p_args;
+}
+
+// TODO(clovis): add msvc support
 class CompileCommand {
    public:
     CompileCommand() = default;
@@ -452,6 +480,22 @@ class CompileCommand {
     Result do_make_build_dir() const { return do_mkdir(build_dir()); }
     // Returns Result::success() if build directory was removed or did not exist.
     Result do_clear_build_dir() const { return do_rm(build_dir()); }
+
+    // Adds CFLAGS and linker flags for specified package to compiler_args().
+    // You can pass multiple packages space separated.
+    // Returns Result::failure() if package was not found, otherwise returns Result::success().
+    // Throws error on failure.
+    // pkgconf must be installed.
+    Result do_add_package(std::string_view package) {
+        std::string p_args{do_get_package_args(package)};
+        if (p_args.empty()) {
+            return Result::failure();
+        }
+
+        add_compiler_arg(p_args);
+
+        return Result::success();
+    }
 
     // Prints usefull info.
     void log_info() const {
