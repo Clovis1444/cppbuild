@@ -3,6 +3,7 @@
 //
 // TODO(clovis): add timer functionality
 // TODO(clovis): implement generating compile_commands.json using clang -MJ
+// TODO(clovis): add overloads for add_compiler_args and add_compiler_sources to add multiple entries through one function call
 
 #pragma once
 
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <iostream>
 #include <set>
+#include <unordered_set>
 #include <string>
 #include <mutex>
 #include <string_view>
@@ -312,13 +314,16 @@ inline Result do_cd(const Fs::path& path) {
 // Returns CFLAGS and linker flags for specified package.
 // Throws error on failure.
 // pkgconf must be installed.
-inline std::string do_get_package_args(std::string_view package) {
-    // TODO(clovis): add msvc support using --msvc-syntax
+inline std::string do_get_package_args(std::string_view package, bool msvc_syntax = false) {
     std::string cmd{"pkgconf --cflags --libs "};
+    if (msvc_syntax) {
+        cmd.append("--msvc-syntax ");
+    }
     cmd.append(package);
 
-    Result r{do_execute_command(cmd, true)};
+    Result r{do_execute_command_weak(cmd, true)};
     if (r.is_failure()) {
+        log_e(std::string{"Failed to find package: "}.append(package));
         return {};
     }
 
@@ -335,7 +340,6 @@ inline std::string do_get_package_args(std::string_view package) {
     return p_args;
 }
 
-// TODO(clovis): add msvc support
 class CompileCommand {
    public:
     CompileCommand() = default;
@@ -375,8 +379,14 @@ class CompileCommand {
             cmd.append(arg);
             cmd.append(" ");
         }
-        cmd.append("-o ");
-        cmd.append(target_path());
+        if (is_using_msvc()) {
+            cmd.append("/Fe \"");
+            cmd.append(target_path());
+            cmd.append("\" ");
+        } else {
+            cmd.append("-o ");
+            cmd.append(target_path());
+        }
 
         return cmd;
     }
@@ -487,7 +497,9 @@ class CompileCommand {
     // Throws error on failure.
     // pkgconf must be installed.
     Result do_add_package(std::string_view package) {
-        std::string p_args{do_get_package_args(package)};
+        bool msvc_syntax{is_using_msvc()};
+
+        std::string p_args{do_get_package_args(package, msvc_syntax)};
         if (p_args.empty()) {
             return Result::failure();
         }
@@ -495,6 +507,30 @@ class CompileCommand {
         add_compiler_arg(p_args);
 
         return Result::success();
+    }
+
+    // Returns false if compiler is not defined or not using: "cl" or "msvc"
+    bool is_using_msvc() const {
+        if (compiler().empty()) {
+            return false;
+        }
+
+        Fs::path c_path{compiler()};
+        if (!c_path.has_filename()) {
+            return false;
+        }
+
+        std::string c_name{c_path.stem().c_str()};
+
+        static std::unordered_set<std::string_view> msvc_names {
+            "cl",
+            "msvc"
+        };
+
+        // Check if compiler name is one of msvc_names
+        bool is_msvc{msvc_names.find(c_name) != msvc_names.end()};
+
+        return is_msvc;
     }
 
     // Prints usefull info.
