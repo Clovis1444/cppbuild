@@ -3,6 +3,8 @@
 //
 // TODO(clovis): add timer functionality
 // TODO(clovis): implement generating compile_commands.json using clang -MJ
+// TODO(clovis): add testing support? via subdir?
+// TODO(clovis): add CompileCommand::do_compile_weak()
 
 #pragma once
 
@@ -44,8 +46,10 @@ public:
     explicit operator int() const { return exit_code_; }
     explicit operator bool() const { return is_ok(); }
 
+    // TODO(clovis): rename this to upper case to avoid confusion with is_...
     // Returns Result with kSuccess exit_code.
     static Result success() { return Result{kSuccess}; }
+    // TODO(clovis): rename this to upper case to avoid confusion with is_...
     // Returns Result with kFailure exit_code.
     static Result failure() { return Result{kFailure}; }
 
