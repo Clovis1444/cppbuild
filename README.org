@@ -6,7 +6,7 @@ Based on [[https://github.com/tsoding/nob.h#nobuild-idea][NoBuild idea]]. Inspir
 I was tired of CMake bullshit, so i decided to try a different approach.
 That's how ~cppbuild~ was created.
 
-* Table of contents: :toc:
+* Table of contents :toc:
 - [[#about][About]]
   - [[#why-there-are-a-lot-of-build-systems-for-c][Why? There are a lot of build systems for c++.]]
 - [[#requirements][Requirements]]
