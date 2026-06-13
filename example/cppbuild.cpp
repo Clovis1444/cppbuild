@@ -12,6 +12,8 @@ int main() {
     cmd.set_target_name("example");
     cmd.set_build_dir("build");
 
+    cmd.log_info();
+
     cmd.do_compile_and_run();
 
     return 0;

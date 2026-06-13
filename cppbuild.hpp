@@ -46,12 +46,10 @@ public:
     explicit operator int() const { return exit_code_; }
     explicit operator bool() const { return is_ok(); }
 
-    // TODO(clovis): rename this to upper case to avoid confusion with is_...
     // Returns Result with kSuccess exit_code.
-    static Result success() { return Result{kSuccess}; }
-    // TODO(clovis): rename this to upper case to avoid confusion with is_...
+    static Result SUCCESS() { return Result{kSuccess}; }
     // Returns Result with kFailure exit_code.
-    static Result failure() { return Result{kFailure}; }
+    static Result FAILURE() { return Result{kFailure}; }
 
     int exit_code() const { return exit_code_; }
     // Returns if result is success. Returns false otherwise.
@@ -215,7 +213,7 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
     FILE* f{popen(cmd.data(), "r")};
     if (f == nullptr) {
         Cppbuild::log_e("popen() failed");
-        return Result::failure();
+        return Result::FAILURE();
     }
 
     const size_t line_buff_size{512};
@@ -251,33 +249,33 @@ inline Result do_execute_command(const std::string& cmd, bool silent = false) {
     return result;
 }
 
-// Returns Result::success() if directory was created or already exist.
+// Returns Result::SUCCESS() if directory was created or already exist.
 inline Result do_mkdir(const Fs::path& dir_path) {
     if (Fs::exists(dir_path) && Fs::is_directory(dir_path)) {
-        return Result::success();
+        return Result::SUCCESS();
     }
 
     log_i(std::string{"Creating directory: "}.append(dir_path));
 
     if (Fs::exists(dir_path) && !Fs::is_directory(dir_path)) {
         log_e(std::string{dir_path}.append(": is not a directory"));
-        return Result::failure();
+        return Result::FAILURE();
     }
 
     try {
         Fs::create_directory(dir_path);
     } catch (const Fs::filesystem_error& e) {
         log_e(std::string{dir_path}.append(": ").append(e.what()));
-        return Result::failure();
+        return Result::FAILURE();
     }
 
-    return Result::success();
+    return Result::SUCCESS();
 }
 // Removes entry recursively if exists. Returns true if entry was removed or did
 // not exist.
 inline Result do_rm(const Fs::path& path) {
     if (!Fs::exists(path)) {
-        return Result::success();
+        return Result::SUCCESS();
     }
 
     log_i(std::string{"Removing: "}.append(path));
@@ -286,14 +284,14 @@ inline Result do_rm(const Fs::path& path) {
         Fs::remove_all(path);
     } catch (const Fs::filesystem_error& e) {
         log_e(std::string{path}.append(": ").append(e.what()));
-        return Result::failure();
+        return Result::FAILURE();
     }
 
     if (Fs::exists(path)) {
         log_e(std::string{"Failed to remove "}.append(path));
     }
 
-    return Result::success();
+    return Result::SUCCESS();
 }
 
 // Returns current working directory.
@@ -308,10 +306,10 @@ inline Result do_cd(const Fs::path& path) {
     } catch(const Fs::filesystem_error& e) {
         log_e(std::string{"Failed to change working dir to "}
         .append(path).append(": ").append(e.what()));
-        return Result::failure();
+        return Result::FAILURE();
     }
 
-    return Result::success();
+    return Result::SUCCESS();
 }
 
 // Returns CFLAGS and linker flags for specified package.
@@ -487,11 +485,11 @@ class CompileCommand {
     Result do_compile() const {
         if (compiler().empty()) {
             log_e("Compiler is not set");
-            return Result::failure();
+            return Result::FAILURE();
         }
         if (target_name().empty()) {
             log_e("Target is not set");
-            return Result::failure();
+            return Result::FAILURE();
         }
 
         // Build dir step
@@ -514,7 +512,7 @@ class CompileCommand {
 
         if (!Fs::exists(target_path())) {
             log_e(std::string{target_path()}.append(" target does not exist"));
-            return Result::failure();
+            return Result::FAILURE();
         }
 
         std::string cmd{target_path()};
@@ -524,20 +522,20 @@ class CompileCommand {
     // do_compile() + do_run()
     Result do_compile_and_run() const {
         if (!do_compile()) {
-            return Result::failure();
+            return Result::FAILURE();
         }
 
         return do_run();
     }
 
-    // Returns Result::success() if build directory was created or already exist.
+    // Returns Result::SUCCESS() if build directory was created or already exist.
     Result do_make_build_dir() const { return do_mkdir(build_dir()); }
-    // Returns Result::success() if build directory was removed or did not exist.
+    // Returns Result::SUCCESS() if build directory was removed or did not exist.
     Result do_clear_build_dir() const { return do_rm(build_dir()); }
 
     // Adds CFLAGS and linker flags for specified package to compiler_args().
     // You can pass multiple packages space separated.
-    // Returns Result::failure() if package was not found, otherwise returns Result::success().
+    // Returns Result::FAILURE() if package was not found, otherwise returns Result::SUCCESS().
     // Throws error on failure.
     // pkgconf must be installed.
     Result do_add_package(std::string_view package) {
@@ -545,12 +543,12 @@ class CompileCommand {
 
         std::string p_args{do_get_package_args(package, msvc_syntax)};
         if (p_args.empty()) {
-            return Result::failure();
+            return Result::FAILURE();
         }
 
         add_compiler_arg(p_args);
 
-        return Result::success();
+        return Result::SUCCESS();
     }
 
     // Returns false if compiler is not defined or not using: "cl" or "msvc"
