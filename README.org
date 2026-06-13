@@ -1,14 +1,49 @@
-#+title: cppbuild
+* About
+~cppbuild~ - c++ library for building c/c++ projects.
+Based on [[https://github.com/tsoding/nob.h#nobuild-idea][NoBuild idea]]. Inspired by [[https://github.com/tsoding/nob.h][nob.h]].
+
+** Why? There are a lot of build systems for c++.
+I was tired of CMake bullshit, so i decided to try a different approach.
+That's how ~cppbuild~ was created.
 
 * Requirements
 
 - Any *c++ compiler with c++17 support*
 
+* Usage
+1. Write *cppbuild.cpp* for your project into project root.
+2. Execute =clang++ cppbuild.cpp -o cppbuild && ./cppbuild= to build your project
+
+See [[./example][example hello world project]].
+
+#+begin_quote
+[!NOTE]
+*cppbuild* executable should be called from the same directory as *cppbuild.cpp*. Otherwise you might mess up relative paths in your *cppbuild.cpp*.
+#+end_quote
+
+#+begin_quote
+[!TIP]
+You are not restricted by using only clang. You can use any *c++ compiler with c++17 support*.
+#+end_quote
+
+#+begin_quote
+[!TIP]
+You can create alias for ~cppbuild~ in your shell.
+#+end_quote
+
 * Development
 
-To build and run *test.cpp* using ~cppbuild~ run:
+To run *tests* execute:
 
 #+begin_src bash
+cd tests
+clang++ cppbuild.cpp -o cppbuild && ./cppbuild
+#+end_src
+
+To run *example* execute:
+
+#+begin_src bash
+cd example
 clang++ cppbuild.cpp -o cppbuild && ./cppbuild
 #+end_src
 
