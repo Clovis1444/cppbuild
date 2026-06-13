@@ -3,7 +3,6 @@
 //
 // TODO(clovis): add timer functionality
 // TODO(clovis): implement generating compile_commands.json using clang -MJ
-// TODO(clovis): add overloads for add_compiler_args and add_compiler_sources to add multiple entries through one function call
 
 #pragma once
 
@@ -343,6 +342,7 @@ inline std::string do_get_package_args(std::string_view package, bool msvc_synta
 class CompileCommand {
    public:
     CompileCommand() = default;
+    explicit CompileCommand(std::string_view compiler) :c_path_{compiler} {}
 
 
     /////////////////////////////////////GETTERS////////////////////////////////////
@@ -401,38 +401,78 @@ class CompileCommand {
         target_name_ = target_name;
     }
 
+    // Overrides compiler args.
     void set_compiler_args(const CompilerArgs& c_args) {
         c_args_ = c_args;
     }
-    // Returns false if arg already defined
+    // Inserts arg into compiler args list.
+    // Returns false if arg was already present.
     bool add_compiler_arg(const std::string& c_arg) {
-        if (c_args_.find(c_arg) != c_args_.end()) {
-            return false;
+        return c_args_.insert(c_arg).second;
+    }
+    // Inserts args into compiler args list.
+    // Returns false if at least one source was already present.
+    bool add_compiler_args(const CompilerArgs& c_args) {
+        bool result{true};
+        for (const auto& arg : c_args) {
+            if (!add_compiler_arg(arg)) {
+                result = false;
+            }
         }
-
-        c_args_.insert(c_arg);
-        return true;
+        return result;
     }
-    // Returns false if arg was not defined
+    // Erases arg from compiler args list.
+    // Returns false if arg was present.
     bool remove_compiler_arg(const std::string& c_arg) {
-        return static_cast<bool>(c_args_.erase(c_arg));
+        return c_args_.erase(c_arg) > 0;
+    }
+    // Erases args from compiler args list.
+    // Returns false if at least one arg was not present.
+    bool remove_compiler_args(const CompilerArgs& c_args) {
+        bool result{true};
+        for (const auto& arg : c_args) {
+            if (!remove_compiler_arg(arg)) {
+                result = false;
+            }
+        }
+        return result;
     }
 
+    // Overrides compiler sources.
     void set_compiler_sources(const CompilerSources& c_sources) {
         c_sources_ = c_sources;
     }
-    // Returns false if source already defined
+    // Inserts source into compiler sources list.
+    // Returns false if source was already present.
     bool add_compiler_source(const std::string& c_source) {
-        if (c_sources_.find(c_source) != c_sources_.end()) {
-            return false;
-        }
-
-        c_sources_.insert(c_source);
-        return true;
+        return c_sources_.insert(c_source).second;
     }
-    // Returns false if source is not defined
+    // Inserts sources into compiler sources list.
+    // Returns false if at least one source was already present.
+    bool add_compiler_sources(const CompilerSources& c_sources) {
+        bool result{true};
+        for (const auto& source : c_sources) {
+            if (!add_compiler_source(source)) {
+                result = false;
+            }
+        }
+        return result;
+    }
+    // Erases source from compiler sources list.
+    // Returns false if source was not present.
     bool remove_compiler_source(const std::string& c_source) {
-        return static_cast<bool>(c_sources_.erase(c_source));
+        return c_sources_.erase(c_source) > 0;
+    }
+    // Erases sources from compiler sources list.
+    // Returns false if at least one source was not present.
+    bool remove_compiler_sources(const CompilerSources& c_sources) {
+        bool result{true};
+        for (const auto& source : c_sources) {
+            if (!remove_compiler_source(source)) {
+                result = false;
+            }
+        }
+        return result;
     }
 
     void set_build_dir(std::string_view build_dir) { build_dir_ = build_dir; }
