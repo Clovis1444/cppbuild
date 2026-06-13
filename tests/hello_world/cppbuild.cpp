@@ -1,6 +1,8 @@
-#include "../cppbuild.hpp"
+#include "../../cppbuild.hpp"
 
 int main() {
+    Cppbuild::Settings::set_display_info(false);
+
     Cppbuild::CompileCommand cmd{"clang++"};
     cmd.add_compiler_args({
         "-Wall",
@@ -8,9 +10,9 @@ int main() {
         "-Wpedantic",
         "-Werror",
     });
-    cmd.set_compiler_sources({"example.cpp"});
-    cmd.set_target_name("example");
-    cmd.set_build_dir("build");
+    cmd.set_compiler_sources({"test.cpp"});
+    cmd.set_target_name("hello_world_test");
+    cmd.set_build_dir("../build");
 
     cmd.do_compile_and_run();
 
