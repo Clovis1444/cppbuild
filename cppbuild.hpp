@@ -2,21 +2,24 @@
 // filesystem/execute shell commands).
 //
 // TODO(clovis): add timer functionality
-// TODO(clovis): implement generating compile_commands.json using clang -MJ
+// TODO(clovis): implement auto generating compile_commands.json
+// TODO(clovis): add header file support: needed for qt's moc and compile_commands
+// TODO(clovis): implement feature system?: enable/disable feature
 // TODO(clovis): add testing support? via subdir?
-// TODO(clovis): add CompileCommand::do_compile_weak()
+// TODO(clovis): add CompileCommand::do_compile_weak(): need for tests
 
 #pragma once
 
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
-#include <set>
-#include <unordered_set>
-#include <string>
 #include <mutex>
+#include <set>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace Cppbuild {
 
@@ -573,6 +576,85 @@ class CompileCommand {
         bool is_msvc{msvc_names.find(c_name) != msvc_names.end()};
 
         return is_msvc;
+    }
+
+    // Returns compile_commands string for the current CompileCommand configuration.
+    // Does not perform any checks.
+    // TODO(clovis): this should probably return commands with flags:
+    // "-c", "-o", "file.o" - one command per one translation unit
+    // It kinda works(i guess?), but should be properly implemented when caching will be implemented
+    std::string compile_commands_string(bool enclosed = true) const {
+        const CompilerSources& sources{compiler_sources()};
+        if (sources.empty()) {
+            return {};
+        }
+
+        std::string str{};
+
+        if (enclosed) {
+            str.append("[\n");
+        }
+
+        for (auto it{sources.begin()}; it != sources.end(); ++it ) {
+            const std::string& file{*it};
+
+            str.append("{\n");
+
+            // directory
+            str += "\"directory\": ";
+            str += "\"";
+            str += working_dir();
+            str += "\",\n";
+            // file
+            str += "\"file\": ";
+            str += "\"";
+            str += file;
+            str += "\",\n";
+            // arguments
+            // command
+            str += "\"command\": ";
+            str += "\"";
+            str += cmd_string();
+            str += "\"\n";
+
+            str.append("}");
+            // add comma if not last element
+            if (it != std::prev(sources.end())) {
+                str.append(",");
+            }
+            str.append("\n");
+        }
+
+        if (enclosed) {
+            str.append("]");
+        }
+
+        return str;
+    }
+
+    // Generates compile_commands.json in build directory.
+    // If file already exists - overwrites it.
+    // Returns Result::SUCCESS() if file was written without errors.
+    // Does not perform any checks.
+    Result generate_compile_commands_json() const {
+        if (!do_make_build_dir()) {
+            return Result::FAILURE();
+        }
+
+        const std::string file_name{build_dir().append("compile_commands.json")};
+        std::ofstream file{file_name};
+        if (!file) {
+            log_w(std::string{file_name}.append(": failed to create file stream"));
+            return Result::FAILURE();
+        }
+
+        file << compile_commands_string();
+        if (!file) {
+            log_w(std::string{file_name}.append(": failed to write file"));
+            return Result::FAILURE();
+        }
+
+        return Result::SUCCESS();
     }
 
     // Prints usefull info.

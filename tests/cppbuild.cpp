@@ -12,7 +12,12 @@ int main() {
     cmd.set_build_dir(root_dir + "/build");
 
     Cppbuild::log_i("RUNNING TESTS...");
-    Cppbuild::Settings::set_display_info(false);
+    // TODO(clovis): remove this when CompileCommand::compile_weak() will be implemented
+    Cppbuild::Settings::override_collection({
+        .exit_on_error=false,
+        .not_idiot=true,
+        .display_info=false,
+    });
 
     int tests_count{};
     int success_tests{};

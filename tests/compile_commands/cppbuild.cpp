@@ -9,10 +9,16 @@ int main() {
         "-Wextra",
         "-Wpedantic",
         "-Werror",
+        // Include dir here
+        "-Isome_dir",
     });
-    cmd.do_add_package("Qt6Core Qt6Widgets");
-    cmd.set_compiler_sources({"test.cpp"});
-    cmd.set_target_name("add_qt6_test");
+    cmd.set_compiler_sources({
+        "test.cpp",
+        "some_dir/some_source.cpp",
+    });
+    cmd.set_target_name("compile_commands_test");
+
+    cmd.generate_compile_commands_json();
 
     cmd.do_compile_and_run();
 

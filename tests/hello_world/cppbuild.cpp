@@ -12,7 +12,6 @@ int main() {
     });
     cmd.set_compiler_sources({"test.cpp"});
     cmd.set_target_name("hello_world_test");
-    cmd.set_build_dir("../build");
 
     cmd.do_compile_and_run();
 
