@@ -23,11 +23,10 @@
 
 namespace Cppbuild {
 
-// TODO(clovis): This works for msvc, but mingw already has popen() and pclose() macros
 #if defined(_WIN32) || defined(_WIN64)
 inline int WEXITSTATUS(int exit_status) { return exit_status; }
-inline FILE* popen(const char* cmd, const char* mode) { return _popen(cmd, mode); }
-inline int   pclose(FILE* f) { return _pclose(f); }
+inline FILE* popen(const char* cmd, const char* mode) { return ::_popen(cmd, mode); }
+inline int   pclose(FILE* f) { return ::_pclose(f); }
 #endif
 
 namespace Fs = std::filesystem;
@@ -214,7 +213,7 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
     }
 
     // TODO(clovis): popen() always poops cmd error into the output
-    FILE* f{popen(cmd.data(), "r")};
+    FILE* f{Cppbuild::popen(cmd.data(), "r")};
     if (f == nullptr) {
         Cppbuild::log_e("popen() failed");
         return Result::FAILURE();
@@ -235,7 +234,7 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
     }
 
     // Get cmd exit code
-    int exit_status{pclose(f)};
+    int exit_status{Cppbuild::pclose(f)};
     int exit_code{WEXITSTATUS(exit_status)};
 
     return Result{exit_code, cmd_output};
