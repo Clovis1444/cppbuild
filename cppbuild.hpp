@@ -23,10 +23,11 @@
 
 namespace Cppbuild {
 
-// TODO(clovis): check if this works on windows
+// TODO(clovis): This works for msvc, but mingw already has popen() and pclose() macros
 #if defined(_WIN32) || defined(_WIN64)
-inline FILE* ppopen(const char* cmd, const char* modes) { return _popen(cmd, mode); }
-inline int   ppclose(FILE* f) { return _pclose(f); }
+inline int WEXITSTATUS(int exit_status) { return exit_status; }
+inline FILE* popen(const char* cmd, const char* mode) { return _popen(cmd, mode); }
+inline int   pclose(FILE* f) { return _pclose(f); }
 #endif
 
 namespace Fs = std::filesystem;
@@ -258,17 +259,17 @@ inline Result do_mkdir(const Fs::path& dir_path) {
         return Result::SUCCESS();
     }
 
-    log_i(std::string{"Creating directory: "}.append(dir_path));
+    log_i(std::string{"Creating directory: "}.append(dir_path.string()));
 
     if (Fs::exists(dir_path) && !Fs::is_directory(dir_path)) {
-        log_e(std::string{dir_path}.append(": is not a directory"));
+        log_e(std::string{dir_path.string()}.append(": is not a directory"));
         return Result::FAILURE();
     }
 
     try {
         Fs::create_directory(dir_path);
     } catch (const Fs::filesystem_error& e) {
-        log_e(std::string{dir_path}.append(": ").append(e.what()));
+        log_e(std::string{dir_path.string()}.append(": ").append(e.what()));
         return Result::FAILURE();
     }
 
@@ -281,17 +282,17 @@ inline Result do_rm(const Fs::path& path) {
         return Result::SUCCESS();
     }
 
-    log_i(std::string{"Removing: "}.append(path));
+    log_i(std::string{"Removing: "}.append(path.string()));
 
     try {
         Fs::remove_all(path);
     } catch (const Fs::filesystem_error& e) {
-        log_e(std::string{path}.append(": ").append(e.what()));
+        log_e(std::string{path.string()}.append(": ").append(e.what()));
         return Result::FAILURE();
     }
 
     if (Fs::exists(path)) {
-        log_e(std::string{"Failed to remove "}.append(path));
+        log_e(std::string{"Failed to remove "}.append(path.string()));
     }
 
     return Result::SUCCESS();
@@ -303,12 +304,12 @@ inline Fs::path working_dir() { return Fs::current_path(); }
 // Changes current working directory. Same as "cd" command.
 // Returns true on success.
 inline Result do_cd(const Fs::path& path) {
-    log_i(std::string{"Changing working directory to: "}.append(path));
+    log_i(std::string{"Changing working directory to: "}.append(path.string()));
     try {
         Fs::current_path(path);
     } catch(const Fs::filesystem_error& e) {
         log_e(std::string{"Failed to change working dir to "}
-        .append(path).append(": ").append(e.what()));
+        .append(path.string()).append(": ").append(e.what()));
         return Result::FAILURE();
     }
 
@@ -386,11 +387,11 @@ class CompileCommand {
         }
         if (is_using_msvc()) {
             cmd.append("/Fe \"");
-            cmd.append(target_path());
+            cmd.append(target_path().string());
             cmd.append("\" ");
         } else {
             cmd.append("-o ");
-            cmd.append(target_path());
+            cmd.append(target_path().string());
         }
 
         return cmd;
@@ -511,14 +512,14 @@ class CompileCommand {
     }
 
     Result do_run() const {
-        log_i(std::string{"Running target: "}.append(target_path()));
+        log_i(std::string{"Running target: "}.append(target_path().string()));
 
         if (!Fs::exists(target_path())) {
-            log_e(std::string{target_path()}.append(" target does not exist"));
+            log_e(std::string{target_path().string()}.append(" target does not exist"));
             return Result::FAILURE();
         }
 
-        std::string cmd{target_path()};
+        std::string cmd{target_path().string()};
         return do_execute_command(cmd);
     }
 
@@ -565,7 +566,7 @@ class CompileCommand {
             return false;
         }
 
-        std::string c_name{c_path.stem().c_str()};
+        std::string c_name{c_path.stem().string()};
 
         static std::unordered_set<std::string_view> msvc_names {
             "cl",
@@ -603,7 +604,7 @@ class CompileCommand {
             // directory
             str += "\"directory\": ";
             str += "\"";
-            str += working_dir();
+            str += working_dir().string();
             str += "\",\n";
             // file
             str += "\"file\": ";
@@ -641,7 +642,7 @@ class CompileCommand {
             return Result::FAILURE();
         }
 
-        const std::string file_name{build_dir().append("compile_commands.json")};
+        const std::string file_name{build_dir().string().append("compile_commands.json")};
         std::ofstream file{file_name};
         if (!file) {
             log_w(std::string{file_name}.append(": failed to create file stream"));
@@ -660,9 +661,9 @@ class CompileCommand {
     // Prints usefull info.
     void log_info() const {
         log_i(std::string{"cppbuild v"}.append(Settings::version()));
-        log_i(std::string{"Working directory: "}.append(working_dir()));
-        log_i(std::string{"Build directory:   "}.append(build_dir()));
-        log_i(std::string{"Target path:       "}.append(target_path()));
+        log_i(std::string{"Working directory: "}.append(working_dir().string()));
+        log_i(std::string{"Build directory:   "}.append(build_dir().string()));
+        log_i(std::string{"Target path:       "}.append(target_path().string()));
         log_i(std::string{"Compiler path:     "}.append(compiler()));
         std::cout << '\n' << std::flush;
     }
