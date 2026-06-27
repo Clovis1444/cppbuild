@@ -371,8 +371,17 @@ class CompileCommand {
         }
         return b_dir;
     }
-    // Returns build_dir() + target_name().
-    Fs::path target_path() const { return build_dir().append(target_name()); }
+    // On Windows return target_name() + ".exe".
+    // On other platforms just returns target_name().
+    const std::string target_full_name() const {
+        std::string t_name{target_name()};
+#if defined(_WIN32) || defined(_WIN64)
+        t_name.append(".exe");
+#endif
+        return t_name;
+    }
+    // Returns build_dir() + target_full_name().
+    Fs::path target_path() const { return build_dir().append(target_full_name()); }
 
     // Returns string containing current compile command.
     // Do not performs any checks.
@@ -644,8 +653,6 @@ class CompileCommand {
             return Result::FAILURE();
         }
 
-        // TODO(clovis): test on linux
-        // TODO(clovis): introduce Cppbuild::Path, which will be truly cross platform unlike std::filesystem::path
         const std::string file_name{build_dir().append("compile_commands.json").string()};
         std::ofstream file{file_name};
         if (!file) {
