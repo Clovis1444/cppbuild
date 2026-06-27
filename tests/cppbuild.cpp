@@ -3,7 +3,7 @@
 int main() {
     Cppbuild::CompileCommand cmd{"clang++"};
 
-    std::string root_dir{Cppbuild::working_dir()};
+    std::string root_dir{Cppbuild::working_dir().string()};
 
     // NOTE: relative path
     cmd.add_compiler_arg("-std=c++17");
@@ -13,11 +13,11 @@ int main() {
 
     Cppbuild::log_i("RUNNING TESTS...");
     // TODO(clovis): remove this when CompileCommand::compile_weak() will be implemented
-    Cppbuild::Settings::override_collection({
-        .exit_on_error=false,
-        .not_idiot=true,
-        .display_info=false,
-    });
+    Cppbuild::SettingsCollection sc{};
+    sc.exit_on_error = false;
+    sc.not_idiot = true;
+    sc.display_info = false;
+    Cppbuild::Settings::override_collection(sc);
 
     int tests_count{};
     int success_tests{};
@@ -37,12 +37,12 @@ int main() {
         Cppbuild::do_cd(path);
 
         if (Cppbuild::Fs::exists(cppbuild_path)) {
-            cmd.set_compiler_sources({cppbuild_path});
+            cmd.set_compiler_sources({cppbuild_path.string()});
 
             // TODO(clovis): do compile_weak() here
             Cppbuild::Result r{cmd.do_compile_and_run()};
             std::string msg_prefix {"TEST("};
-            msg_prefix.append(path.stem()).append("): ");
+            msg_prefix.append(path.stem().string()).append("): ");
             if (r.is_success()) {
                 Cppbuild::log_i(msg_prefix.append("SUCCESS"), true);
                 ++success_tests;
@@ -53,7 +53,7 @@ int main() {
             ++tests_count;
         } else {
             // TODO(clovis): handle case where no build file (use default args) here
-            Cppbuild::log_w(std::string{path.stem()}
+            Cppbuild::log_w(std::string{path.stem().string()}
                             + ": Failed to find cppbuild.cpp. Default args tests currently not supported!"
                             );
         }

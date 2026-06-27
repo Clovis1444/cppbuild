@@ -17,31 +17,25 @@ int main() {
         return 2;
     }
 
-    uintmax_t file_size{};
-    try {
-        file_size = std::filesystem::file_size(file_path);
-    } catch(const std::filesystem::filesystem_error&) {
+    std::stringstream content_buffer{};
+    content_buffer << file.rdbuf();
+    std::string content{content_buffer.str()};
+
+    if (content_buffer.fail()) {
         return 3;
-    }
-
-    std::string content(file_size, '\0');
-
-    file.read(content.data(), static_cast<std::streamsize>(file_size));
-    if (file.fail()){
-        return 4;
     }
 
     std::regex pattern{
 R"(\[
 \{
-\"directory\": \".*tests\/compile_commands\",
-\"file\": \"some_dir\/some_source\.cpp\",
-\"command\": \".* some_dir\/some_source.cpp test.cpp -Isome_dir -Wall -Werror -Wextra -Wpedantic -o .*tests\/compile_commands\/build\/compile_commands_test\"
+\"directory\": \".*tests[\/\\]compile_commands\",
+\"file\": \"some_dir[\/\\]some_source\.cpp\",
+\"command\": \".* some_dir[\/\\]some_source.cpp test.cpp -Isome_dir -Wall -Werror -Wextra -Wpedantic -o .*tests[\/\\]compile_commands[\/\\]build[\/\\]compile_commands_test(\.exe)?\"
 \},
 \{
-\"directory\": \".*tests\/compile_commands\",
+\"directory\": \".*tests[\/\\]compile_commands\",
 \"file\": \"test\.cpp\",
-\"command\": \".* some_dir\/some_source.cpp test.cpp -Isome_dir -Wall -Werror -Wextra -Wpedantic -o .*tests\/compile_commands\/build\/compile_commands_test\"
+\"command\": \".* some_dir[\/\\]some_source.cpp test.cpp -Isome_dir -Wall -Werror -Wextra -Wpedantic -o .*tests[\/\\]compile_commands[\/\\]build[\/\\]compile_commands_test(\.exe)?\"
 \}
 \])"
     };
@@ -49,7 +43,7 @@ R"(\[
     bool is_json_valid{std::regex_match(content, pattern)};
 
     if (!is_json_valid) {
-        return 5;
+        return 4;
     }
 
     return 0;
