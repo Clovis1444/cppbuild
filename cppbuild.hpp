@@ -25,8 +25,11 @@ namespace Cppbuild {
 
 #if defined(_WIN32) || defined(_WIN64)
 inline int WEXITSTATUS(int exit_status) { return exit_status; }
-inline FILE* popen(const char* cmd, const char* mode) { return ::_popen(cmd, mode); }
+inline FILE* popen(const char* cmd, const char* modes) { return ::_popen(cmd, modes); }
 inline int   pclose(FILE* f) { return ::_pclose(f); }
+#else
+inline FILE* popen(const char* cmd, const char* modes) { return ::popen(cmd, modes); }
+inline int   pclose(FILE* f) { return ::pclose(f); }
 #endif
 
 namespace Fs = std::filesystem;
