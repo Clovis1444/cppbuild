@@ -644,7 +644,9 @@ class CompileCommand {
             return Result::FAILURE();
         }
 
-        const std::string file_name{build_dir().string().append("compile_commands.json")};
+        // TODO(clovis): test on linux
+        // TODO(clovis): introduce Cppbuild::Path, which will be truly cross platform unlike std::filesystem::path
+        const std::string file_name{build_dir().append("compile_commands.json").string()};
         std::ofstream file{file_name};
         if (!file) {
             log_w(std::string{file_name}.append(": failed to create file stream"));
