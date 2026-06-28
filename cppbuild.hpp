@@ -371,12 +371,14 @@ class CompileCommand {
         }
         return b_dir;
     }
-    // On Windows return target_name() + ".exe".
+    // On Windows return target_name() + ".exe"(if target_name() does not provide it).
     // On other platforms just returns target_name().
-    const std::string target_full_name() const {
+    std::string target_full_name() const {
         std::string t_name{target_name()};
 #if defined(_WIN32) || defined(_WIN64)
-        t_name.append(".exe");
+        if (!Fs::path{t_name}.has_extension()) {
+            t_name.append(".exe");
+        }
 #endif
         return t_name;
     }
