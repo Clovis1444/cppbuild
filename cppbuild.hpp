@@ -75,6 +75,22 @@ private:
     std::string output_;
 };
 
+// Represents how command will be executed.
+struct ExecuteCommandOptions {
+    // Whether a command output will be printed.
+    bool silent{false};
+    // In which shell a command will be executed.
+    // std::optional<std::string> shell{std::nullopt};
+
+    static ExecuteCommandOptions STRONG() {
+        ExecuteCommandOptions opt{};
+        return opt;
+    }
+    static ExecuteCommandOptions WEAK() {
+        ExecuteCommandOptions opt{};
+        return opt;
+    }
+};
 
 // Collection of all setting entries.
 struct SettingsCollection {
@@ -208,10 +224,13 @@ static void log_e(std::string_view text, bool force_display = false) {
     log(LogType::Error, text, force_display);
 }
 
-// Executes command in system shell, throws an error on failure.
-// If "silent" is true - command will be executed without printing any output.
-inline Result do_execute_command_weak(const std::string& cmd, bool silent = false) {
-    if (!silent) {
+// Executes command in system shell, throws an error if command failed to execute.
+// Does not throw if command result is failure.
+inline Result do_execute_command_weak(
+    const std::string& cmd,
+    const ExecuteCommandOptions& opt = ExecuteCommandOptions::WEAK()
+) {
+    if (!opt.silent) {
         log_i("Executing: " + cmd);
     }
 
@@ -232,7 +251,7 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
     }
 
     // Print cmd output
-    if (!silent) {
+    if (!opt.silent) {
         std::cout << cmd_output;
     }
 
@@ -242,10 +261,12 @@ inline Result do_execute_command_weak(const std::string& cmd, bool silent = fals
 
     return Result{exit_code, cmd_output};
 }
-// Executes command in system shell. Does not throw an error on failure.
-// If "silent" is true - command will be executed without printing any output.
-inline Result do_execute_command(const std::string& cmd, bool silent = false) {
-    Result result{do_execute_command_weak(cmd, silent)};
+// Executes command in system shell. Does throw an error on command failure.
+inline Result do_execute_command(
+    const std::string& cmd,
+    const ExecuteCommandOptions& opt = ExecuteCommandOptions::STRONG()
+) {
+    Result result{do_execute_command_weak(cmd, opt)};
 
     if (result.is_failure()) {
         Cppbuild::log_e(cmd + ": command failed with exit code "
@@ -328,7 +349,9 @@ inline std::string do_get_package_args(std::string_view package, bool msvc_synta
     }
     cmd.append(package);
 
-    Result r{do_execute_command_weak(cmd, true)};
+    ExecuteCommandOptions cmd_opt{};
+    cmd_opt.silent = true;
+    Result r{do_execute_command_weak(cmd, cmd_opt)};
     if (r.is_failure()) {
         log_e(std::string{"Failed to find package: "}.append(package));
         return {};
@@ -498,8 +521,9 @@ class CompileCommand {
 
     ////////////////////////////////////////////////////////////////////////////////
 
-    // Creates build directory and executes compile command
-    Result do_compile() const {
+    // Creates build directory and executes compile command.
+    // If weak = true - does not throw an error on failed compilation.
+    Result do_compile(bool weak = false) const {
         if (compiler().empty()) {
             log_e("Compiler is not set");
             return Result::FAILURE();
@@ -521,6 +545,9 @@ class CompileCommand {
 
         // Compilation step
         std::string cmd{cmd_string()};
+        if (weak) {
+            return do_execute_command_weak(cmd);
+        }
         return do_execute_command(cmd);
     }
 
@@ -537,8 +564,8 @@ class CompileCommand {
     }
 
     // do_compile() + do_run()
-    Result do_compile_and_run() const {
-        if (!do_compile()) {
+    Result do_compile_and_run(bool weak = false) const {
+        if (!do_compile(weak)) {
             return Result::FAILURE();
         }
 

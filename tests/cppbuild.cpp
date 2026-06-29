@@ -12,10 +12,7 @@ int main() {
     cmd.set_build_dir(root_dir + "/build");
 
     Cppbuild::log_i("RUNNING TESTS...");
-    // TODO(clovis): remove this when CompileCommand::compile_weak() will be implemented
     Cppbuild::SettingsCollection sc{};
-    sc.exit_on_error = false;
-    sc.not_idiot = true;
     sc.display_info = false;
     Cppbuild::Settings::override_collection(sc);
 
@@ -39,8 +36,7 @@ int main() {
         if (Cppbuild::Fs::exists(cppbuild_path)) {
             cmd.set_compiler_sources({cppbuild_path.string()});
 
-            // TODO(clovis): do compile_weak() here
-            Cppbuild::Result r{cmd.do_compile_and_run()};
+            Cppbuild::Result r{cmd.do_compile_and_run(true)};
             std::string msg_prefix {"TEST("};
             msg_prefix.append(path.stem().string()).append("): ");
             if (r.is_success()) {
@@ -52,9 +48,8 @@ int main() {
 
             ++tests_count;
         } else {
-            // TODO(clovis): handle case where no build file (use default args) here
             Cppbuild::log_w(std::string{path.stem().string()}
-                            + ": Failed to find cppbuild.cpp. Default args tests currently not supported!"
+                            + ": Failed to find cppbuild.cpp!"
                             );
         }
 
