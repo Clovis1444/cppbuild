@@ -5,8 +5,6 @@
 // TODO(clovis): implement auto generating compile_commands.json
 // TODO(clovis): add header file support: needed for qt's moc and compile_commands
 // TODO(clovis): implement feature system?: enable/disable feature
-// TODO(clovis): add testing support? via subdir?
-// TODO(clovis): add CompileCommand::do_compile_weak(): need for tests
 
 #pragma once
 
@@ -95,8 +93,6 @@ struct ExecuteCommandOptions {
 // Collection of all setting entries.
 struct SettingsCollection {
     std::string version{"0.0.1"};
-    bool exit_on_error{true};
-    bool not_idiot{false};
     bool display_info{true};
     bool display_warn{true};
 };
@@ -112,34 +108,6 @@ class Settings {
     static std::string version() {
         std::lock_guard lock{mtx_};
         return sc_.version;
-    }
-    // Returns whether build process interups after cppbuild::log() error call;
-    // Default value is "false".
-    // It is higly recommended to do not change it.
-    static bool exit_on_error() {
-        std::lock_guard lock{mtx_};
-        return sc_.exit_on_error;
-    }
-    // Do not mess around with this function.
-    static void set_exit_on_error(bool val) {
-        std::lock_guard lock{mtx_};
-
-        if (!val && !Settings::sc_.not_idiot) {
-            std::cout <<  "[cppbuild WARNING] "
-            << "It is higly unrecommended to change value of \"exit_on_error\".\n"
-            << "Any build process must be performed sequentially.\n"
-            << "Each build process step affects the next step.\n"
-            << "So if one step fails - the process should be interupted.\n\n"
-            << "For example, you can accidentally\n"
-            << "nuke your entire file system if you are not careful.\n\n"
-            << "Just do not do it. You probably do not need it.\n\n"
-            << "If you still want to do it - assure cppbuild you are not_idiot.\n"
-            << std::flush;
-
-            std::exit(0);
-        }
-
-        sc_.exit_on_error = val;
     }
     // Returns if info logs will be displayed.
     static bool display_info() {
@@ -178,8 +146,11 @@ class Settings {
 };
 
 enum class LogType {
+    // For general info.
     Info,
+    // For not critical failures.
     Warning,
+    // For critical failures. When build proccess should be terminated.
     Error,
 };
 
@@ -207,7 +178,7 @@ static void log(LogType lt, std::string_view text, bool force_display = false) {
 
     std::cout << prefix << text << '\n' << std::flush;
 
-    if (Settings::exit_on_error() && lt == LogType::Error) {
+    if (lt == LogType::Error) {
         std::exit(1);
     }
 }
