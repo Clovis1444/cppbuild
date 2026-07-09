@@ -33,7 +33,6 @@
 
 Checks: >
   -*,
-  abseil-*,
   bugprone-*,
   google-*,
   misc-*,

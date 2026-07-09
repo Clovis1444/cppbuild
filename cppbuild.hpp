@@ -2,13 +2,16 @@
 // filesystem/execute shell commands).
 //
 // TODO(clovis): add timer functionality
-// TODO(clovis): implement auto generating compile_commands.json
+// TODO(clovis): add ability to pass env vars into object file
+// TODO(clovis): add configuration file feature
 // TODO(clovis): add header file support: needed for qt's moc and compile_commands
 // TODO(clovis): implement feature system?: enable/disable feature
 
 #pragma once
 
 #include <array>
+#include <sstream>
+#include <vector>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +37,7 @@ namespace Fs = std::filesystem;
 
 using CompilerArgs = std::set<std::string>;
 using CompilerSources = std::set<std::string>;
+using CompilerHeaders = std::set<std::string>;
 
 // Represents shell command execution result.
 class Result {
@@ -88,6 +92,13 @@ struct ExecuteCommandOptions {
         ExecuteCommandOptions opt{};
         return opt;
     }
+};
+
+// Represents compilation command for each object file
+struct CompilationCmd {
+    std::string source;
+    std::string cmd;
+    std::string output;
 };
 
 // Collection of all setting entries.
@@ -196,7 +207,7 @@ static void log_e(std::string_view text, bool force_display = false) {
 }
 
 // Executes command in system shell, throws an error if command failed to execute.
-// Does not throw if command result is failure.
+// Does not throw an error if command result is failure.
 inline Result do_execute_command_weak(
     const std::string& cmd,
     const ExecuteCommandOptions& opt = ExecuteCommandOptions::WEAK()
@@ -295,6 +306,16 @@ inline Result do_rm(const Fs::path& path) {
 // Returns current working directory.
 inline Fs::path working_dir() { return Fs::current_path(); }
 
+// Returns path represented in full(absolute aka canonical) form.
+// If input path is relative and does not yet exists return working_dir() + path.
+inline Fs::path full_path(const Fs::path& path) {
+    Fs::path p{Fs::weakly_canonical(path)};
+    if (p.is_relative()) {
+        p = working_dir() / p;
+    }
+    return p;
+}
+
 // Changes current working directory. Same as "cd" command.
 // Returns true on success.
 inline Result do_cd(const Fs::path& path) {
@@ -352,7 +373,22 @@ class CompileCommand {
     const std::string& compiler() const { return c_path_; }
     const std::string& target_name() const { return target_name_; }
     const CompilerArgs& compiler_args() const { return c_args_; }
+    std::string compiler_args_str(bool strip_linker_flags = false) const {
+        std::string args{};
+        for (auto it{compiler_args().begin()}; it != compiler_args().end(); ++it) {
+            if (strip_linker_flags && is_linker_flag(*it)) {
+                continue;
+            }
+
+            args.append(*it);
+            if (it != std::prev(compiler_args().end())) {
+            args.push_back(' ');
+            }
+        }
+        return args;
+    }
     const CompilerSources& compiler_sources() const { return c_sources_; }
+    const CompilerHeaders& compiler_headers() const { return c_headers_; }
     // Default value is "build".
     Fs::path build_dir() const {
         if (build_dir_.empty()) {
@@ -379,25 +415,79 @@ class CompileCommand {
     // Returns build_dir() + target_full_name().
     Fs::path target_path() const { return build_dir().append(target_full_name()); }
 
-    // Returns string containing current compile command.
-    // Do not performs any checks.
-    std::string cmd_string() const {
+    // Returns vector of CompilationCmd, containing compile command for each source file.
+    // Returns empty vector if no sources were added or compiler was not defined.
+    std::vector<CompilationCmd> compilation_cmds() const {
+        const CompilerSources& sources{compiler_sources()};
+        if (sources.empty() || compiler().empty()) {
+            return {};
+        }
+
+        const std::string args{compiler_args_str(true)};
+        std::vector<CompilationCmd> cmds{};
+        cmds.reserve(sources.size());
+
+        for (const auto& source : compiler_sources()) {
+            std::string cmd{compiler()};
+            cmd.append(" ");
+            cmd.append(args);
+#if defined(_WIN32) || defined(_WIN64)
+            const std::string src_out_file{Fs::path{source}.filename().string() + ".obj"};
+#else
+            const std::string src_out_file{Fs::path{source}.filename().string() + ".o"};
+#endif
+            const std::string src_out_path{build_dir().append(src_out_file).string()};
+            const std::string src_path{full_path(source).string()};
+            if (is_using_msvc()) {
+                cmd.append(" /c ");
+                cmd.append(src_path);
+                cmd.append(" /Fo ");
+                cmd.append(src_out_path);
+            } else {
+                cmd.append(" -c ");
+                cmd.append(src_path);
+                cmd.append(" -o ");
+                cmd.append(src_out_path);
+            }
+
+            std::pair<std::string, std::string> cmd_pair{full_path(source).string(), cmd};
+            CompilationCmd comp_cmd{};
+            comp_cmd.source = src_path;
+            comp_cmd.cmd = cmd;
+            comp_cmd.output = src_out_path;
+
+            cmds.emplace_back(comp_cmd);
+        }
+
+        return cmds;
+    }
+    // Returns string containing linking command for the target.
+    // Returns empty string if no sources were added or compiler was not defined.
+    std::string linking_cmd() const {
+        const CompilerSources& sources{compiler_sources()};
+        if (sources.empty() || compiler().empty()) {
+            return {};
+        }
+
         std::string cmd{compiler()};
         cmd.append(" ");
+        cmd.append(compiler_args_str());
         for (const auto& source : compiler_sources()) {
-            cmd.append(source);
+#if defined(_WIN32) || defined(_WIN64)
+            const std::string src_out_file{Fs::path{source}.filename().string() + ".obj"};
+#else
+            const std::string src_out_file{Fs::path{source}.filename().string() + ".o"};
+#endif
+            const std::string src_out_path{build_dir().append(src_out_file).string()};
+
             cmd.append(" ");
-        }
-        for (const auto& arg : compiler_args()) {
-            cmd.append(arg);
-            cmd.append(" ");
+            cmd.append(src_out_path);
         }
         if (is_using_msvc()) {
-            cmd.append("/Fe \"");
-            cmd.append(target_path().string());
-            cmd.append("\" ");
+            cmd.append(" /Fe \"");
+            cmd.append(target_path().string() + "\"");
         } else {
-            cmd.append("-o ");
+            cmd.append(" -o ");
             cmd.append(target_path().string());
         }
 
@@ -488,6 +578,43 @@ class CompileCommand {
         return result;
     }
 
+    // Overrides compiler headers.
+    void set_compiler_headers(const CompilerHeaders& c_headers) {
+        c_headers_ = c_headers;
+    }
+    // Inserts header into compiler headers list.
+    // Returns false if header was already present.
+    bool add_compiler_header(const std::string& c_header) {
+        return c_headers_.insert(c_header).second;
+    }
+    // Inserts headers into compiler headers list.
+    // Returns false if at least one header was already present.
+    bool add_compiler_headers(const CompilerHeaders& c_headers) {
+        bool result{true};
+        for (const auto& header : c_headers) {
+            if (!add_compiler_header(header)) {
+                result = false;
+            }
+        }
+        return result;
+    }
+    // Erases header from compiler headers list.
+    // Returns false if header was not present.
+    bool remove_compiler_header(const std::string& c_header) {
+        return c_headers_.erase(c_header) > 0;
+    }
+    // Erases headers from compiler headers list.
+    // Returns false if at least one header was not present.
+    bool remove_compiler_headers(const CompilerHeaders& c_headers) {
+        bool result{true};
+        for (const auto& header : c_headers) {
+            if (!remove_compiler_header(header)) {
+                result = false;
+            }
+        }
+        return result;
+    }
+
     void set_build_dir(std::string_view build_dir) { build_dir_ = build_dir; }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -496,11 +623,15 @@ class CompileCommand {
     // If weak = true - does not throw an error on failed compilation.
     Result do_compile(bool weak = false) const {
         if (compiler().empty()) {
-            log_e("Compiler is not set");
+            if (!weak) {
+                log_e("Compiler is not set");
+            }
             return Result::FAILURE();
         }
         if (target_name().empty()) {
-            log_e("Target is not set");
+            if (!weak) {
+                log_e("Target is not set");
+            }
             return Result::FAILURE();
         }
 
@@ -514,24 +645,35 @@ class CompileCommand {
 
         log_i(std::string{"Compiling target: "}.append(target_name()));
 
+        // TODO(clovis): check if everything works on Windows
+        // TODO(clovis): add parallel compilation
         // Compilation step
-        std::string cmd{cmd_string()};
-        if (weak) {
-            return do_execute_command_weak(cmd);
+        for (const auto& cmd : compilation_cmds()) {
+            Result r{weak?do_execute_command_weak(cmd.cmd):do_execute_command(cmd.cmd)};
+
+            if (r.is_failure()) {
+                return r;
+            }
         }
-        return do_execute_command(cmd);
+        // Linking step
+        const std::string cmd{linking_cmd()};
+        Result r{weak?do_execute_command_weak(cmd):do_execute_command(cmd)};
+
+        return r;
     }
 
-    Result do_run() const {
+    Result do_run(bool weak = false) const {
         log_i(std::string{"Running target: "}.append(target_path().string()));
 
         if (!Fs::exists(target_path())) {
-            log_e(std::string{target_path().string()}.append(" target does not exist"));
+            if (!weak) {
+                log_e(std::string{target_path().string()}.append(" target does not exist"));
+            }
             return Result::FAILURE();
         }
 
         std::string cmd{target_path().string()};
-        return do_execute_command(cmd);
+        return weak?do_execute_command_weak(cmd):do_execute_command(cmd);
     }
 
     // do_compile() + do_run()
@@ -540,7 +682,7 @@ class CompileCommand {
             return Result::FAILURE();
         }
 
-        return do_run();
+        return do_run(weak);
     }
 
     // Returns Result::SUCCESS() if build directory was created or already exist.
@@ -556,12 +698,19 @@ class CompileCommand {
     Result do_add_package(std::string_view package) {
         bool msvc_syntax{is_using_msvc()};
 
-        std::string p_args{do_get_package_args(package, msvc_syntax)};
+        std::stringstream args_sstream{do_get_package_args(package, msvc_syntax)};
+
+        std::string arg{};
+        CompilerArgs p_args{};
+        while(args_sstream >> arg) {
+            p_args.insert(arg);
+        }
+
         if (p_args.empty()) {
             return Result::FAILURE();
         }
 
-        add_compiler_arg(p_args);
+        add_compiler_args(p_args);
 
         return Result::SUCCESS();
     }
@@ -591,13 +740,9 @@ class CompileCommand {
     }
 
     // Returns compile_commands string for the current CompileCommand configuration.
-    // Does not perform any checks.
-    // TODO(clovis): this should probably return commands with flags:
-    // "-c", "-o", "file.o" - one command per one translation unit
-    // It kinda works(i guess?), but should be properly implemented when caching will be implemented
     std::string compile_commands_string(bool enclosed = true) const {
-        const CompilerSources& sources{compiler_sources()};
-        if (sources.empty()) {
+        std::vector<CompilationCmd> cmds {compilation_cmds()};
+        if (cmds.empty()) {
             return {};
         }
 
@@ -607,8 +752,8 @@ class CompileCommand {
             str.append("[\n");
         }
 
-        for (auto it{sources.begin()}; it != sources.end(); ++it ) {
-            const std::string& file{*it};
+        for (auto it{cmds.begin()}; it != cmds.end(); ++it ) {
+            const std::string& file{it->source};
 
             str.append("{\n");
 
@@ -622,16 +767,20 @@ class CompileCommand {
             str += "\"";
             str += file;
             str += "\",\n";
-            // arguments
             // command
             str += "\"command\": ";
             str += "\"";
-            str += cmd_string();
+            str += it->cmd;
+            str += "\",\n";
+            // output
+            str += "\"output\": ";
+            str += "\"";
+            str += it->output;
             str += "\"\n";
 
             str.append("}");
             // add comma if not last element
-            if (it != std::prev(sources.end())) {
+            if (it != std::prev(cmds.end())) {
                 str.append(",");
             }
             str.append("\n");
@@ -647,7 +796,6 @@ class CompileCommand {
     // Generates compile_commands.json in build directory.
     // If file already exists - overwrites it.
     // Returns Result::SUCCESS() if file was written without errors.
-    // Does not perform any checks.
     Result generate_compile_commands_json() const {
         if (!do_make_build_dir()) {
             return Result::FAILURE();
@@ -680,10 +828,24 @@ class CompileCommand {
     }
 
    private:
+    static bool is_linker_flag(const std::string& flag) {
+        // TODO(clovis): ensure this list is exhaustive
+        bool r{
+            flag.find("-l")       != std::string::npos ||
+            flag.find("-L")       != std::string::npos ||
+            flag.find("-Wl")      != std::string::npos ||
+            flag.find("/LIBPATH") != std::string::npos ||
+            flag.find("/link")    != std::string::npos
+        };
+        return r;
+    }
+
+   private:
     std::string c_path_;
     std::string target_name_;
     CompilerArgs c_args_;
     CompilerSources c_sources_;
+    CompilerHeaders c_headers_;
     std::string build_dir_{"build"};
 };
 }  // namespace Cppbuild
