@@ -2,9 +2,7 @@
 // filesystem/execute shell commands).
 //
 // TODO(clovis): add timer functionality
-// TODO(clovis): add ability to pass env vars into object file
 // TODO(clovis): add configuration file feature
-// TODO(clovis): add header file support: needed for qt's moc and compile_commands
 // TODO(clovis): implement feature system?: enable/disable feature
 
 #pragma once
@@ -35,9 +33,8 @@ inline int   pclose(FILE* f) { return ::pclose(f); }
 
 namespace Fs = std::filesystem;
 
-using CompilerArgs = std::set<std::string>;
+using CompilerArgs    = std::set<std::string>;
 using CompilerSources = std::set<std::string>;
-using CompilerHeaders = std::set<std::string>;
 
 // Represents shell command execution result.
 class Result {
@@ -95,7 +92,7 @@ struct ExecuteCommandOptions {
 };
 
 // Represents compilation command for each object file
-struct CompilationCmd {
+struct CompilationObj {
     std::string source;
     std::string cmd;
     std::string output;
@@ -109,7 +106,7 @@ struct SettingsCollection {
 };
 // Global Settings class.
 class Settings {
-    public:
+public:
     Settings(const Settings&) = delete;
     Settings(Settings&&) = delete;
     Settings& operator=(const Settings&) = delete;
@@ -150,7 +147,7 @@ class Settings {
         sc_ = sc;
     }
 
-    private:
+private:
     Settings() {}
     inline static SettingsCollection sc_{};
     inline static std::mutex mtx_{};
@@ -272,7 +269,7 @@ inline Result do_mkdir(const Fs::path& dir_path) {
     }
 
     try {
-        Fs::create_directory(dir_path);
+        Fs::create_directories(dir_path);
     } catch (const Fs::filesystem_error& e) {
         log_e(std::string{dir_path.string()}.append(": ").append(e.what()));
         return Result::FAILURE();
@@ -363,7 +360,7 @@ inline std::string do_get_package_args(std::string_view package, bool msvc_synta
 }
 
 class CompileCommand {
-   public:
+public:
     CompileCommand() = default;
     explicit CompileCommand(std::string_view compiler) :c_path_{compiler} {}
 
@@ -388,18 +385,13 @@ class CompileCommand {
         return args;
     }
     const CompilerSources& compiler_sources() const { return c_sources_; }
-    const CompilerHeaders& compiler_headers() const { return c_headers_; }
     // Default value is "build".
     Fs::path build_dir() const {
         if (build_dir_.empty()) {
             return working_dir();
         }
 
-        Fs::path b_dir{Fs::weakly_canonical(build_dir_)};
-        if (b_dir.is_relative()) {
-            b_dir = working_dir() / b_dir;
-        }
-        return b_dir;
+        return full_path(build_dir_);
     }
     // On Windows return target_name() + ".exe"(if target_name() does not provide it).
     // On other platforms just returns target_name().
@@ -417,14 +409,14 @@ class CompileCommand {
 
     // Returns vector of CompilationCmd, containing compile command for each source file.
     // Returns empty vector if no sources were added or compiler was not defined.
-    std::vector<CompilationCmd> compilation_cmds() const {
+    std::vector<CompilationObj> compilation_cmds() const {
         const CompilerSources& sources{compiler_sources()};
         if (sources.empty() || compiler().empty()) {
             return {};
         }
 
         const std::string args{compiler_args_str(true)};
-        std::vector<CompilationCmd> cmds{};
+        std::vector<CompilationObj> cmds{};
         cmds.reserve(sources.size());
 
         for (const auto& source : compiler_sources()) {
@@ -451,7 +443,7 @@ class CompileCommand {
             }
 
             std::pair<std::string, std::string> cmd_pair{full_path(source).string(), cmd};
-            CompilationCmd comp_cmd{};
+            CompilationObj comp_cmd{};
             comp_cmd.source = src_path;
             comp_cmd.cmd = cmd;
             comp_cmd.output = src_out_path;
@@ -506,12 +498,23 @@ class CompileCommand {
 
     // Overrides compiler args.
     void set_compiler_args(const CompilerArgs& c_args) {
-        c_args_ = c_args;
+        c_args_.clear();
+        for (const auto& arg : c_args) {
+            add_compiler_arg(arg);
+        }
     }
     // Inserts arg into compiler args list.
     // Returns false if arg was already present.
     bool add_compiler_arg(const std::string& c_arg) {
-        return c_args_.insert(c_arg).second;
+        // Trim prefixed whitespaces
+        int str_start_index{0};
+        for (int i{0}; i < c_arg.size(); ++i) {
+            if(!std::isspace(c_arg[i])) {
+                str_start_index = i;
+                break;
+            }
+        }
+        return c_args_.insert(c_arg.substr(str_start_index)).second;
     }
     // Inserts args into compiler args list.
     // Returns false if at least one source was already present.
@@ -572,43 +575,6 @@ class CompileCommand {
         bool result{true};
         for (const auto& source : c_sources) {
             if (!remove_compiler_source(source)) {
-                result = false;
-            }
-        }
-        return result;
-    }
-
-    // Overrides compiler headers.
-    void set_compiler_headers(const CompilerHeaders& c_headers) {
-        c_headers_ = c_headers;
-    }
-    // Inserts header into compiler headers list.
-    // Returns false if header was already present.
-    bool add_compiler_header(const std::string& c_header) {
-        return c_headers_.insert(c_header).second;
-    }
-    // Inserts headers into compiler headers list.
-    // Returns false if at least one header was already present.
-    bool add_compiler_headers(const CompilerHeaders& c_headers) {
-        bool result{true};
-        for (const auto& header : c_headers) {
-            if (!add_compiler_header(header)) {
-                result = false;
-            }
-        }
-        return result;
-    }
-    // Erases header from compiler headers list.
-    // Returns false if header was not present.
-    bool remove_compiler_header(const std::string& c_header) {
-        return c_headers_.erase(c_header) > 0;
-    }
-    // Erases headers from compiler headers list.
-    // Returns false if at least one header was not present.
-    bool remove_compiler_headers(const CompilerHeaders& c_headers) {
-        bool result{true};
-        for (const auto& header : c_headers) {
-            if (!remove_compiler_header(header)) {
                 result = false;
             }
         }
@@ -741,7 +707,7 @@ class CompileCommand {
 
     // Returns compile_commands string for the current CompileCommand configuration.
     std::string compile_commands_string(bool enclosed = true) const {
-        std::vector<CompilationCmd> cmds {compilation_cmds()};
+        std::vector<CompilationObj> cmds {compilation_cmds()};
         if (cmds.empty()) {
             return {};
         }
@@ -827,25 +793,212 @@ class CompileCommand {
         std::cout << '\n' << std::flush;
     }
 
-   private:
+private:
     static bool is_linker_flag(const std::string& flag) {
         // TODO(clovis): ensure this list is exhaustive
+        // Check if starts with
         bool r{
-            flag.find("-l")       != std::string::npos ||
-            flag.find("-L")       != std::string::npos ||
-            flag.find("-Wl")      != std::string::npos ||
-            flag.find("/LIBPATH") != std::string::npos ||
-            flag.find("/link")    != std::string::npos
+            flag.find("-l")       == 0 ||
+            flag.find("-L")       == 0 ||
+            flag.find("-Wl")      == 0 ||
+            flag.find("/LIBPATH") == 0 ||
+            flag.find("/link")    == 0
         };
         return r;
     }
 
-   private:
+private:
     std::string c_path_;
     std::string target_name_;
     CompilerArgs c_args_;
     CompilerSources c_sources_;
-    CompilerHeaders c_headers_;
     std::string build_dir_{"build"};
+};
+
+// TODO(clovis): check if this works on windows and msvc
+// TODO(clovis): for now generated source file just compiles by CompileCommand
+// like any other source file with the same compiler args.
+// This may cause false compiler warnings/errors. Find a way to solve this.
+class QtMoc: private CompileCommand {
+public:
+    explicit QtMoc(std::string_view moc_path, CompileCommand* parent_command = nullptr)
+    : parent_command_{parent_command}
+    {
+        set_compiler(moc_path);
+        set_build_dir("moc/");
+    }
+    explicit QtMoc(CompileCommand* parent_command = nullptr)
+    : QtMoc{"moc", parent_command} {}
+
+    inline static const std::string kMocOutputExtPrefix{".moc"};
+    inline static const std::string kMocOutputExt{".cpp"};
+
+    /////////////////////////////////////GETTERS////////////////////////////////////
+    Fs::path build_dir() const {
+        if (parent_command()) {
+            return parent_command()-> build_dir().append("moc/");
+        }
+
+        return CompileCommand::build_dir();
+    }
+    using CompileCommand::compiler;
+    using CompileCommand::compiler_sources;
+
+    CompilerArgs compiler_args() const {
+        CompilerArgs moc_args{CompileCommand::compiler_args()};
+
+        if (!parent_command()) {
+            return moc_args;
+        }
+
+        const CompilerArgs parent_args{parent_command()->compiler_args()};
+
+        for (const auto& arg : parent_args) {
+            // Check if starts with
+            bool moc_relevant_arg{
+                arg.find("-I") == 0 ||
+                arg.find("-D") == 0 ||
+                arg.find("-U") == 0 ||
+                arg.find("/I") == 0 ||
+                arg.find("/D") == 0 ||
+                arg.find("/U") == 0
+            };
+
+            if (moc_relevant_arg) {
+                // Convert from msvc style arg to unix style arg
+                if (arg[0] == '/') {
+                    std::string unix_arg{arg};
+                    unix_arg[0] = '-';
+                    moc_args.insert(unix_arg);
+                } else {
+                    moc_args.insert(arg);
+                }
+            }
+        }
+
+        if (parent_command()->is_using_msvc()) {
+            moc_args.insert("--compiler-flavor msvc");
+        }
+
+        return moc_args;
+    }
+
+    CompileCommand* parent_command() const { return parent_command_; }
+    // Returns list of sources that will be generated after calling do_compile().
+    CompilerSources moc_output() const {
+        CompilerSources moc_out{};
+
+        for (const auto& input : compiler_sources()) {
+            moc_out.insert(to_moc_output_name(input));
+        }
+
+        return moc_out;
+    }
+    ////////////////////////////////////////////////////////////////////////////////
+
+    /////////////////////////////////////SETTERS////////////////////////////////////
+    using CompileCommand::set_compiler;
+
+    using CompileCommand::set_compiler_args;
+    using CompileCommand::add_compiler_arg;
+    using CompileCommand::add_compiler_args;
+    using CompileCommand::remove_compiler_arg;
+
+    using CompileCommand::set_compiler_sources;
+    using CompileCommand::add_compiler_source;
+    using CompileCommand::add_compiler_sources;
+    using CompileCommand::remove_compiler_source;
+    using CompileCommand::remove_compiler_sources;
+
+    void set_parent_command(CompileCommand* parent_comand) { parent_command_ = parent_comand; }
+    ////////////////////////////////////////////////////////////////////////////////
+
+    Result do_make_build_dir() const { return do_mkdir(build_dir()); }
+
+    // Runs moc that will generate source files.
+    // If moc exits without errors - add generated source files into parent_command sources.
+    // Returns Result::SUCCESS() on success.
+    Result do_compile(bool weak = false) {
+        if (compiler().empty()) {
+            if (!weak) {
+                log_e("Moc path is not set");
+            }
+            return Result::FAILURE();
+        }
+        if (compiler_sources().empty()) {
+            if (!weak) {
+                log_e("No compiler sources were defined");
+            }
+            return Result::FAILURE();
+        }
+
+        // Build dir step
+        if (!Fs::exists(build_dir())) {
+            Result r{do_make_build_dir()};
+            if (r.is_failure()) {
+                return r;
+            }
+        }
+
+        log_i("Running moc...");
+
+        // Compilation step
+        std::string args{};
+        for (const auto& arg : compiler_args()) {
+            args.append(arg + ' ');
+        }
+
+        // TODO(clovis): add parallel compilation
+        for (const auto& source : compiler_sources()) {
+            std::string cmd{compiler() + " "};
+
+            cmd.append(source);
+            cmd.append(" -o ");
+            cmd.append(to_moc_output_name(source) + " ");
+
+            cmd.append(args);
+
+            Result r{weak?do_execute_command_weak(cmd):do_execute_command(cmd)};
+
+            if (r.is_failure()) {
+                return r;
+            }
+        }
+
+        // Add parent sources step
+        if (parent_command()) {
+            parent_command()->add_compiler_sources(moc_output());
+        }
+
+        return Result::SUCCESS();
+    }
+
+    std::string to_moc_output_name(const Fs::path& file_path) const {
+        const std::string filename{
+            file_path.stem().string() +
+            kMocOutputExtPrefix +
+            kMocOutputExt
+        };
+
+        Fs::path moc_output{build_dir()/filename};
+
+        return moc_output.string();
+    }
+    static bool has_moc_output_name(const Fs::path& file_path) {
+        return file_path.extension().string() == kMocOutputExt && file_path.stem().extension().string() == kMocOutputExtPrefix;
+    }
+
+private:
+    // Clears all moc output from parent sources.
+    // Returns false if at least one source was not present or parent is nullptr.
+    bool clear_parent() const {
+        if (!parent_command_) {
+            return false;
+        }
+
+        return parent_command_->remove_compiler_sources(moc_output());
+    }
+private:
+    CompileCommand* parent_command_{nullptr};
 };
 }  // namespace Cppbuild
