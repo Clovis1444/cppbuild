@@ -1,0 +1,11 @@
+This is a test text file.
+
+Test 1: the next string should change from "version: @VER@" to "version: 1.44.4".
+version: @VER@
+
+Test 2: the next string should change from "Hello, World!" to "Hello from configured file!".
+Hello, World!
+
+Test 3: the next two strings should change from "This is the first string.\nThis is the second string." to "This is the first string. This is the second string.".
+This is the first string.
+This is the second string.

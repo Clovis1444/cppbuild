@@ -2,23 +2,23 @@
 // filesystem/execute shell commands).
 //
 // TODO(clovis): add timer functionality
-// TODO(clovis): add configuration file feature
-// TODO(clovis): implement feature system?: enable/disable feature
+// TODO(clovis): implement caching for CompileCommand, QtMoc, do_configure_file()
 
 #pragma once
 
 #include <array>
-#include <sstream>
-#include <vector>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
 namespace Cppbuild {
 
@@ -357,6 +357,143 @@ inline std::string do_get_package_args(std::string_view package, bool msvc_synta
     }
 
     return p_args;
+}
+
+// Reads file content into string.
+// On failure throws an error and returns an empty string.
+// Note: this function is not optimised for large files.
+inline std::string get_file_content(
+    const Fs::path& path,
+    std::ios_base::openmode mode = std::ios_base::in
+) {
+    if((mode & std::ios_base::out) == std::ios_base::out) {
+        log_e(path.string() + ": wrong openmode std::ios_base::out");
+        return {};
+    }
+
+    std::ifstream file{path, mode};
+    if (!file) {
+        log_e(full_path(path).string() + ": failed to open file");
+        return {};
+    }
+
+    std::stringstream content{};
+    content << file.rdbuf();
+
+    if (content.fail()) {
+        log_e(full_path(path).string() + ": error while reading file");
+        return {};
+    }
+
+    return content.str();
+}
+
+// Returns string where each occurence of
+// match.key is replaced by match.value.
+inline std::string configure_string(
+    const std::string& s,
+    const std::map<std::string_view, std::string_view>& match
+) {
+    if(match.empty() || s.empty()) {
+        return s;
+    }
+
+    std::string result{};
+    result.reserve(s.size());
+
+    size_t i{};
+    while(i < s.size()) {
+        bool matched{};
+        for (const auto& [key, value] : match) {
+            if(s.compare(i, key.size(), key) == 0) {
+                result.append(value);
+                i += key.size();
+                break;
+            }
+        }
+
+        if(!matched){
+            result += s[i];
+            ++i;
+        }
+    }
+
+    return result;
+}
+
+// Returns Result::SUCCESS() if file was created/overwritten.
+// If parent dir is not exists - creates it.
+// Throws an error on failure.
+inline Result do_create_file(
+    const Fs::path& f_path,
+    const std::string& f_content,
+    // If overwrite is false - return Result::FAILURE() if file already exists
+    bool overwrite = false,
+    std::ios_base::openmode mode = std::ios_base::out
+) {
+    const Fs::path path{full_path(f_path)};
+
+    if((mode & std::ios_base::in) == std::ios_base::in) {
+        log_e(path.string() + ": wrong openmode std::ios_base::in");
+        return Result::FAILURE();
+    }
+
+    if (!overwrite && Fs::exists(path)) {
+        return Result::FAILURE();
+    }
+    if (Fs::exists(path) && !Fs::is_regular_file(path)) {
+        log_e(path.string() + ": is not a regular file");
+        return Result::FAILURE();
+    }
+
+    // Create parent dir.
+    if(!do_mkdir(path.parent_path())) {
+        log_e(path.string() + ": failed to create parent dir " + path.parent_path().string());
+        return Result::FAILURE();
+    }
+
+    // Create file
+    std::ofstream file{path, mode};
+    if(!file) {
+        log_e(path.string() + ": failed to create/open file");
+        return Result::FAILURE();
+    }
+
+    if (!f_content.empty()) {
+        file << f_content;
+    }
+    if(!file) {
+        log_e(path.string() + ": failed to write file");
+        return Result::FAILURE();
+    }
+
+    return Result::SUCCESS();
+}
+
+// Returns Result::SUCCESS() if something was written to output_file.
+inline Result do_configure_file(
+    const Fs::path& input_file,
+    const std::map<std::string_view, std::string_view>& match,
+    const Fs::path& output_file,
+    // If overwrite is false - return Result::FAILURE() if output_file already exists
+    bool overwrite = true
+) {
+    if(!overwrite && Fs::exists(output_file)) {
+        return Result::FAILURE();
+    }
+    if (Fs::exists(output_file) && !Fs::is_regular_file(output_file)) {
+        log_e(output_file.string() + ": is not a regular file");
+        return Result::FAILURE();
+    }
+
+    // This may be an empty string
+    std::string content{get_file_content(input_file)};
+
+    // Configure string
+    content = configure_string(content, match);
+
+    // Write file
+    return do_create_file(output_file, content, true, std::ios_base::out);
 }
 
 class CompileCommand {
