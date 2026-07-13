@@ -415,7 +415,7 @@ inline std::string get_file_content(
     const Fs::path& path,
     std::ios_base::openmode mode = std::ios_base::in
 ) {
-    if((mode & std::ios_base::out) == std::ios_base::out) {
+    if ((mode & std::ios_base::out) == std::ios_base::out) {
         log_e(path.string() + ": wrong openmode std::ios_base::out");
         return {};
     }
@@ -443,7 +443,7 @@ inline std::string configure_string(
     const std::string& s,
     const std::map<std::string_view, std::string_view>& match
 ) {
-    if(match.empty() || s.empty()) {
+    if (match.empty() || s.empty()) {
         return s;
     }
 
@@ -454,14 +454,14 @@ inline std::string configure_string(
     while(i < s.size()) {
         bool matched{};
         for (const auto& [key, value] : match) {
-            if(s.compare(i, key.size(), key) == 0) {
+            if (s.compare(i, key.size(), key) == 0) {
                 result.append(value);
                 i += key.size();
                 break;
             }
         }
 
-        if(!matched){
+        if (!matched){
             result += s[i];
             ++i;
         }
@@ -482,7 +482,7 @@ inline Result do_create_file(
 ) {
     const Fs::path path{full_path(f_path)};
 
-    if((mode & std::ios_base::in) == std::ios_base::in) {
+    if ((mode & std::ios_base::in) == std::ios_base::in) {
         log_e(path.string() + ": wrong openmode std::ios_base::in");
         return Result::FAILURE();
     }
@@ -496,14 +496,14 @@ inline Result do_create_file(
     }
 
     // Create parent dir.
-    if(!do_mkdir(path.parent_path())) {
+    if (!do_mkdir(path.parent_path())) {
         log_e(path.string() + ": failed to create parent dir " + path.parent_path().string());
         return Result::FAILURE();
     }
 
     // Create file
     std::ofstream file{path, mode};
-    if(!file) {
+    if (!file) {
         log_e(path.string() + ": failed to create/open file");
         return Result::FAILURE();
     }
@@ -511,7 +511,7 @@ inline Result do_create_file(
     if (!f_content.empty()) {
         file << f_content;
     }
-    if(!file) {
+    if (!file) {
         log_e(path.string() + ": failed to write file");
         return Result::FAILURE();
     }
@@ -527,7 +527,7 @@ inline Result do_configure_file(
     // If overwrite is false - return Result::FAILURE() if output_file already exists
     bool overwrite = true
 ) {
-    if(!overwrite && Fs::exists(output_file)) {
+    if (!overwrite && Fs::exists(output_file)) {
         return Result::FAILURE();
     }
     if (Fs::exists(output_file) && !Fs::is_regular_file(output_file)) {
@@ -695,7 +695,7 @@ public:
         // Trim prefixed whitespaces
         int str_start_index{0};
         for (int i{0}; i < c_arg.size(); ++i) {
-            if(!std::isspace(c_arg[i])) {
+            if (!std::isspace(c_arg[i])) {
                 str_start_index = i;
                 break;
             }
