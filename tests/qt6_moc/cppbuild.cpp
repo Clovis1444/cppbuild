@@ -18,8 +18,11 @@ int main() {
     cmd.set_target_name("add_qt6_test");
 
     Cppbuild::QtMoc moc{&cmd};
-    // TODO(clovis): this will not work on windows
+    // TODO(clovis): add Windows support
+#if defined(_WIN32) || defined(_WIN64)
+#else
     moc.set_compiler("/usr/lib/qt6/moc");
+#endif
     moc.add_compiler_sources({
         "custom_qobject/custom_qobject.hpp",
     });
