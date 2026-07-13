@@ -8,6 +8,7 @@
 #pragma once
 
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -112,7 +113,7 @@ struct SettingsCollection {
     std::string version{"0.0.1"};
     bool display_info{true};
     bool display_warn{true};
-    int thread_limit{static_cast<int>(std::thread::hardware_concurrency())};
+    unsigned int thread_limit{std::thread::hardware_concurrency()};
     bool parallel_compilation{true};
 };
 // Global Settings class.
@@ -148,11 +149,11 @@ public:
     }
 
     // Returns max amount of threads that will be used.
-    static int thread_limit() {
+    static unsigned int thread_limit() {
         std::lock_guard lock{mtx_};
         return sc_.thread_limit;
     }
-    static void set_thread_limit(int val) {
+    static void set_thread_limit(unsigned int val) {
         std::lock_guard lock{mtx_};
         sc_.thread_limit = val;
     }
@@ -291,18 +292,123 @@ inline Result do_execute_command_weak(const std::string& cmd) {
     return do_execute_command(ShellCommand::WEAK(cmd));
 }
 
-// inline Result do_execute_commands_parallel_weak(
-//     const std::vector<std::string>& cmds,
-//     const ExecuteCommandOptions& opt = ExecuteCommandOptions::WEAK(),
-//     int thread_limit = Settings::thread_limit()
-// ) {}
-// inline Result do_execute_commands_parallel(
-//     // Pair of <Cmd, Cmd options>
-//     const std::map<std::string, ExecuteCommandOptions>& cmds,
-//     const int thread_limit = Settings::thread_limit()
-// ) {
-//     return Result::SUCCESS();
-// }
+// Executes commands in parallel threads. Order of execution is not defined.
+// If cmds.size() > thread_limit - executes the rest of commands in the main thread.
+// Returns vector of pairs of Cmd - Result.
+inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel(
+    const std::vector<ShellCommand>& cmds,
+    const unsigned int thread_limit = Settings::thread_limit()
+) {
+    std::vector<std::pair<std::string, Result>> r{};
+    r.resize(cmds.size(), {"", Result::FAILURE()});
+
+    if (cmds.empty()) {
+        return r;
+    }
+
+    if (cmds.size() == 1) {
+        r[0] = {cmds[0].cmd, do_execute_command(cmds[0])};
+        return r;
+    }
+
+    const size_t threads_size(std::clamp(
+        cmds.size(),
+        size_t{0},
+        static_cast<size_t>(thread_limit == 0 ? 0 : thread_limit - 1)
+    ));
+
+    std::vector<std::thread> threads{};
+    threads.resize(threads_size);
+
+    // Step 1: executing commands
+    for (size_t i{0}; i < cmds.size(); ++i) {
+        ShellCommand cmd{cmds[i]};
+        // Important: execute all commands weakly because
+        // we do not want to terminate program before all threads are finished.
+        cmd.weak = true;
+
+        // Execute in new thread
+        if (i < threads_size) {
+            threads[i] = std::thread{[cmd, i, &r](){
+                r[i] = {cmd.cmd, do_execute_command(cmd)};
+            }};
+        }
+        // If threads hit thread limit - execute in the main thread
+        else {
+            r[i] = {cmd.cmd, do_execute_command(cmd)};
+        }
+    }
+
+    // Step 2: waiting for all threads to finish
+    for (std::thread& thread : threads) {
+        thread.join();
+    }
+
+    // Step 3: throw an error if needed
+    int failed_cmds_count{};
+    std::string failed_cmds{};
+    for (size_t i{}; i < cmds.size(); ++i) {
+        const ShellCommand& shell_cmd{cmds[i]};
+        const Result& cmd_result{r[i].second};
+        if (!shell_cmd.weak && cmd_result.is_failure()) {
+            failed_cmds.append(
+                "\n" +
+                shell_cmd.cmd +
+                ": failed with exit code " +
+                std::to_string(cmd_result.exit_code())
+            );
+
+            ++failed_cmds_count;
+        }
+    }
+    if (!failed_cmds.empty()) {
+        std::string err_msg{
+            "The following commands(" +
+            std::to_string(failed_cmds_count) +
+            ") failed:"
+        };
+
+        err_msg.append(failed_cmds);
+
+        log_e(err_msg);
+    }
+
+    return r;
+}
+inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_weak(
+    const std::vector<std::string>& cmds,
+    const unsigned int thread_limit = Settings::thread_limit()
+) {
+    if (cmds.empty()) {
+        return {};
+    }
+
+    std::vector<ShellCommand> shell_cmds{};
+    shell_cmds.reserve(cmds.size());
+
+    for (const auto& cmd : cmds) {
+        shell_cmds.push_back(ShellCommand::WEAK(cmd));
+    }
+
+    return do_execute_commands_parallel(shell_cmds, thread_limit);
+}
+inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_strong(
+    const std::vector<std::string>& cmds,
+    const unsigned int thread_limit = Settings::thread_limit()
+) {
+    if (cmds.empty()) {
+        return {};
+    }
+
+    std::vector<ShellCommand> shell_cmds{};
+    shell_cmds.reserve(cmds.size());
+
+    for (const auto& cmd : cmds) {
+        shell_cmds.push_back(ShellCommand::STRONG(cmd));
+    }
+
+    return do_execute_commands_parallel(shell_cmds, thread_limit);
+}
 
 // Returns Result::SUCCESS() if directory was created or already exist.
 inline Result do_mkdir(const Fs::path& dir_path) {
@@ -639,6 +745,15 @@ public:
 
         return cmds;
     }
+    // Same as compilation_cmds(), but return vector of CompilationCmd.cmd.
+    std::vector<std::string> compilation_cmds_str() const {
+        std::vector<std::string> cmds{};
+        for (const auto& cmd : compilation_cmds()) {
+            cmds.push_back(cmd.cmd);
+        }
+
+        return cmds;
+    }
     // Returns string containing linking command for the target.
     // Returns empty string if no sources were added or compiler was not defined.
     std::string linking_cmd() const {
@@ -787,7 +902,7 @@ public:
             return Result::FAILURE();
         }
 
-        // Build dir step
+        // Step 1: Build dir step
         if (!Fs::exists(build_dir())) {
             Result r{do_make_build_dir()};
             if (r.is_failure()) {
@@ -798,16 +913,29 @@ public:
         log_i(std::string{"Compiling target: "}.append(target_name()));
 
         // TODO(clovis): check if everything works on Windows
-        // TODO(clovis): add parallel compilation
-        // Compilation step
-        for (const auto& cmd : compilation_cmds()) {
-            Result r{weak?do_execute_command_weak(cmd.cmd):do_execute_command_strong(cmd.cmd)};
-
-            if (r.is_failure()) {
-                return r;
+        // Step 2: Compilation step
+        std::vector<std::string> cmds{compilation_cmds_str()};
+        // Determen whether to use parallel compilation
+        const unsigned int thread_limit{
+            Settings::parallel_compilation()?
+            Settings::thread_limit():
+            1
+        };
+        // Do actual compilation
+        const std::vector<std::pair<std::string, Result>>& comp_results{
+            weak?
+            do_execute_commands_parallel_weak(cmds, thread_limit):
+            do_execute_commands_parallel_strong(cmds, thread_limit)
+        };
+        if (!weak) {
+            for ( const auto& result : comp_results) {
+                if (result.second.is_failure()) {
+                    return result.second;
+                }
             }
         }
-        // Linking step
+
+        // Step 3: Linking step
         const std::string cmd{linking_cmd()};
         Result r{weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd)};
 
@@ -1069,6 +1197,29 @@ public:
         return moc_args;
     }
 
+    // Returns vector of compilation commands for each source.
+    std::vector<std::string> compilation_cmds_str() const {
+        std::vector<std::string> cmds{};
+
+        std::string args{};
+        for (const auto& arg : compiler_args()) {
+            args.append(arg + ' ');
+        }
+        for (const auto& source : compiler_sources()) {
+            std::string cmd{compiler() + " "};
+
+            cmd.append(source);
+            cmd.append(" -o ");
+            cmd.append(to_moc_output_name(source) + " ");
+
+            cmd.append(args);
+
+            cmds.push_back(cmd);
+        }
+
+        return cmds;
+    }
+
     CompileCommand* parent_command() const { return parent_command_; }
     // Returns list of sources that will be generated after calling do_compile().
     CompilerSources moc_output() const {
@@ -1118,7 +1269,7 @@ public:
             return Result::FAILURE();
         }
 
-        // Build dir step
+        // Step 1: Build dir step
         if (!Fs::exists(build_dir())) {
             Result r{do_make_build_dir()};
             if (r.is_failure()) {
@@ -1128,30 +1279,29 @@ public:
 
         log_i("Running moc...");
 
-        // Compilation step
-        std::string args{};
-        for (const auto& arg : compiler_args()) {
-            args.append(arg + ' ');
-        }
-
-        // TODO(clovis): add parallel compilation
-        for (const auto& source : compiler_sources()) {
-            std::string cmd{compiler() + " "};
-
-            cmd.append(source);
-            cmd.append(" -o ");
-            cmd.append(to_moc_output_name(source) + " ");
-
-            cmd.append(args);
-
-            Result r{weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd)};
-
-            if (r.is_failure()) {
-                return r;
+        // Step 2: Compilation step
+        std::vector<std::string> cmds{compilation_cmds_str()};
+        // Determen whether to use parallel compilation
+        const unsigned int thread_limit{
+            Settings::parallel_compilation()?
+            Settings::thread_limit():
+            1
+        };
+        // Do actual compilation
+        const std::vector<std::pair<std::string, Result>>& comp_results{
+            weak?
+            do_execute_commands_parallel_weak(cmds, thread_limit):
+            do_execute_commands_parallel_strong(cmds, thread_limit)
+        };
+        if (!weak) {
+            for ( const auto& result : comp_results) {
+                if (result.second.is_failure()) {
+                    return result.second;
+                }
             }
         }
 
-        // Add parent sources step
+        // Step 3: Add parent sources step
         if (parent_command()) {
             parent_command()->add_compiler_sources(moc_output());
         }
