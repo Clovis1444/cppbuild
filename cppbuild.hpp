@@ -3,6 +3,7 @@
 //
 // TODO(clovis): add timer functionality
 // TODO(clovis): implement caching for CompileCommand, QtMoc, do_configure_file()
+// TODO(clovis): add download feature
 
 #pragma once
 
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -75,19 +77,26 @@ private:
 };
 
 // Represents how command will be executed.
-struct ExecuteCommandOptions {
+struct ShellCommand {
+    std::string cmd;
+    // Whether a command throws an error on failure.
+    bool weak{false};
     // Whether a command output will be printed.
     bool silent{false};
     // In which shell a command will be executed.
     // std::optional<std::string> shell{std::nullopt};
 
-    static ExecuteCommandOptions STRONG() {
-        ExecuteCommandOptions opt{};
-        return opt;
+    static ShellCommand STRONG(const std::string& cmd) {
+        ShellCommand command{};
+        command.cmd = cmd;
+        command.weak = false;
+        return command;
     }
-    static ExecuteCommandOptions WEAK() {
-        ExecuteCommandOptions opt{};
-        return opt;
+    static ShellCommand WEAK(const std::string& cmd) {
+        ShellCommand command{};
+        command.cmd = cmd;
+        command.weak = true;
+        return command;
     }
 };
 
@@ -103,6 +112,8 @@ struct SettingsCollection {
     std::string version{"0.0.1"};
     bool display_info{true};
     bool display_warn{true};
+    int thread_limit{static_cast<int>(std::thread::hardware_concurrency())};
+    bool parallel_compilation{true};
 };
 // Global Settings class.
 class Settings {
@@ -134,6 +145,26 @@ public:
     static void set_display_warn(bool val) {
         std::lock_guard lock{mtx_};
         sc_.display_warn = val;
+    }
+
+    // Returns max amount of threads that will be used.
+    static int thread_limit() {
+        std::lock_guard lock{mtx_};
+        return sc_.thread_limit;
+    }
+    static void set_thread_limit(int val) {
+        std::lock_guard lock{mtx_};
+        sc_.thread_limit = val;
+    }
+
+    // Returns if CompileCommand will compile in multiple threads.
+    static bool parallel_compilation() {
+        std::lock_guard lock{mtx_};
+        return sc_.parallel_compilation;
+    }
+    static void set_parallel_compilation(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.parallel_compilation = val;
     }
 
     // Returns copy of a current SettingsCollection.
@@ -203,18 +234,20 @@ static void log_e(std::string_view text, bool force_display = false) {
     log(LogType::Error, text, force_display);
 }
 
-// Executes command in system shell, throws an error if command failed to execute.
-// Does not throw an error if command result is failure.
-inline Result do_execute_command_weak(
-    const std::string& cmd,
-    const ExecuteCommandOptions& opt = ExecuteCommandOptions::WEAK()
-) {
-    if (!opt.silent) {
-        log_i("Executing: " + cmd);
+// Executes command in system shell.
+// If cmd.cmd is an empty string - returns Result::SUCCESS().
+// Throws an error on failure if cmd.weak = false.
+inline Result do_execute_command(const ShellCommand& cmd) {
+    if (cmd.cmd.empty()){
+        return Result::SUCCESS();
+    }
+
+    if (!cmd.silent) {
+        log_i("Executing: " + cmd.cmd);
     }
 
     // TODO(clovis): popen() always poops cmd error into the output
-    FILE* f{Cppbuild::popen(cmd.data(), "r")};
+    FILE* f{Cppbuild::popen(cmd.cmd.data(), "r")};
     if (f == nullptr) {
         Cppbuild::log_e("popen() failed");
         return Result::FAILURE();
@@ -230,7 +263,7 @@ inline Result do_execute_command_weak(
     }
 
     // Print cmd output
-    if (!opt.silent) {
+    if (!cmd.silent) {
         std::cout << cmd_output;
     }
 
@@ -238,22 +271,38 @@ inline Result do_execute_command_weak(
     int exit_status{Cppbuild::pclose(f)};
     int exit_code{WEXITSTATUS(exit_status)};
 
-    return Result{exit_code, cmd_output};
-}
-// Executes command in system shell. Does throw an error on command failure.
-inline Result do_execute_command(
-    const std::string& cmd,
-    const ExecuteCommandOptions& opt = ExecuteCommandOptions::STRONG()
-) {
-    Result result{do_execute_command_weak(cmd, opt)};
-
-    if (result.is_failure()) {
-        Cppbuild::log_e(cmd + ": command failed with exit code "
-                      + std::to_string(result.exit_code()));
+    Result r{exit_code, cmd_output};
+    // Throw error
+    if (!cmd.weak && r.is_failure()) {
+        Cppbuild::log_e(
+            cmd.cmd + ": command failed with exit code "
+            + std::to_string(r.exit_code())
+        );
     }
 
-    return result;
+    return r;
 }
+// Same as do_execute_command(ShellCommand::STRONG(cmd))
+inline Result do_execute_command_strong(const std::string& cmd) {
+    return do_execute_command(ShellCommand::STRONG(cmd));
+}
+// Same as do_execute_command(ShellCommand::WEAK(cmd))
+inline Result do_execute_command_weak(const std::string& cmd) {
+    return do_execute_command(ShellCommand::WEAK(cmd));
+}
+
+// inline Result do_execute_commands_parallel_weak(
+//     const std::vector<std::string>& cmds,
+//     const ExecuteCommandOptions& opt = ExecuteCommandOptions::WEAK(),
+//     int thread_limit = Settings::thread_limit()
+// ) {}
+// inline Result do_execute_commands_parallel(
+//     // Pair of <Cmd, Cmd options>
+//     const std::map<std::string, ExecuteCommandOptions>& cmds,
+//     const int thread_limit = Settings::thread_limit()
+// ) {
+//     return Result::SUCCESS();
+// }
 
 // Returns Result::SUCCESS() if directory was created or already exist.
 inline Result do_mkdir(const Fs::path& dir_path) {
@@ -338,9 +387,9 @@ inline std::string do_get_package_args(std::string_view package, bool msvc_synta
     }
     cmd.append(package);
 
-    ExecuteCommandOptions cmd_opt{};
-    cmd_opt.silent = true;
-    Result r{do_execute_command_weak(cmd, cmd_opt)};
+    ShellCommand shell_cmd{ShellCommand::WEAK(cmd)};
+    shell_cmd.silent = true;
+    Result r{do_execute_command(shell_cmd)};
     if (r.is_failure()) {
         log_e(std::string{"Failed to find package: "}.append(package));
         return {};
@@ -752,7 +801,7 @@ public:
         // TODO(clovis): add parallel compilation
         // Compilation step
         for (const auto& cmd : compilation_cmds()) {
-            Result r{weak?do_execute_command_weak(cmd.cmd):do_execute_command(cmd.cmd)};
+            Result r{weak?do_execute_command_weak(cmd.cmd):do_execute_command_strong(cmd.cmd)};
 
             if (r.is_failure()) {
                 return r;
@@ -760,7 +809,7 @@ public:
         }
         // Linking step
         const std::string cmd{linking_cmd()};
-        Result r{weak?do_execute_command_weak(cmd):do_execute_command(cmd)};
+        Result r{weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd)};
 
         return r;
     }
@@ -776,7 +825,7 @@ public:
         }
 
         std::string cmd{target_path().string()};
-        return weak?do_execute_command_weak(cmd):do_execute_command(cmd);
+        return weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd);
     }
 
     // do_compile() + do_run()
@@ -1095,7 +1144,7 @@ public:
 
             cmd.append(args);
 
-            Result r{weak?do_execute_command_weak(cmd):do_execute_command(cmd)};
+            Result r{weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd)};
 
             if (r.is_failure()) {
                 return r;
