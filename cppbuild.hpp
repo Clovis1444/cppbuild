@@ -849,7 +849,7 @@ public:
     bool add_compiler_arg(const std::string& c_arg) {
         // Trim prefixed whitespaces
         int str_start_index{0};
-        for (int i{0}; i < c_arg.size(); ++i) {
+        for (int i{0}; i < static_cast<int>(c_arg.size()); ++i) {
             if (!std::isspace(c_arg[i])) {
                 str_start_index = i;
                 break;
@@ -967,11 +967,16 @@ public:
             do_execute_commands_parallel_weak(cmds, thread_limit):
             do_execute_commands_parallel_strong(cmds, thread_limit)
         };
-        if (!weak) {
-            for ( const auto& result : comp_results) {
-                if (result.second.is_failure()) {
-                    return result.second;
+        for ( const auto& result : comp_results) {
+            if (result.second.is_failure()) {
+                if (!weak) {
+                    log_e(
+                        result.first +
+                        ": failed with exit code " +
+                        std::to_string(result.second.exit_code())
+                    );
                 }
+                return result.second;
             }
         }
 
