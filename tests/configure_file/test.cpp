@@ -3,8 +3,8 @@
 int main() {
     Cppbuild::Settings::set_display_info(false);
 
-    const Cppbuild::Fs::path input_file{"text.txt.in"};
-    const Cppbuild::Fs::path output_file{"text.txt"};
+    const Cppbuild::Fs::path input_file{"configure_file/text.txt.in"};
+    const Cppbuild::Fs::path output_file{"configure_file/text.txt"};
 
     std::map<std::string_view, std::string_view> match_list {
         {"@VER@\n", "1.44.4\n"},

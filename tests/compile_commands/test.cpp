@@ -11,7 +11,7 @@ int main() {
 
     // Check if file exists and has valid syntax
 
-    std::filesystem::path file_path{"build/compile_commands.json"};
+    std::filesystem::path file_path{"compile_commands/build/compile_commands.json"};
     std::ifstream file {file_path};
     if (!file) {
         return 2;
@@ -28,15 +28,15 @@ int main() {
     std::regex pattern{
 R"(\[
 \{
-\"directory\": \".*tests[\/\\]compile_commands\",
+\"directory\": \".*tests\",
 \"file\": \".*some_dir[\/\\]some_source\.cpp\",
-\"command\": \"clang\+\+ -Isome_dir -Wall -Werror -Wextra -Wpedantic -c .*some_dir[\/\\]some_source\.cpp -o .*tests[\/\\]compile_commands[\/\\]build[\/\\]some_source\.cpp\.o(bj)?\",
+\"command\": \"clang\+\+ -Icompile_commands -I.*some_dir -Wall -Werror -Wextra -Wpedantic -std=c\+\+17 -c .*some_dir[\/\\]some_source\.cpp -o .*tests[\/\\]compile_commands[\/\\]build[\/\\]some_source\.cpp\.o(bj)?\",
 \"output\": \".*some_source\.cpp\.o(bj)?\"
 \},
 \{
-\"directory\": \".*tests[\/\\]compile_commands\",
+\"directory\": \".*tests\",
 \"file\": \".*test\.cpp\",
-\"command\": \"clang\+\+ -Isome_dir -Wall -Werror -Wextra -Wpedantic -c .*test\.cpp -o .*tests[\/\\]compile_commands[\/\\]build[\/\\]test\.cpp\.o(bj)?\",
+\"command\": \"clang\+\+ -Icompile_commands -I.*some_dir -Wall -Werror -Wextra -Wpedantic -std=c\+\+17 -c .*test\.cpp -o .*tests[\/\\]compile_commands[\/\\]build[\/\\]test\.cpp\.o(bj)?\",
 \"output\": \".*test\.cpp\.o(bj)?\"
 \}
 \])"

@@ -1,68 +1,204 @@
 #include "../cppbuild.hpp"
 
+namespace {
+    size_t success_count{};
+    void handle_test_result(const std::string& test_name, const Cppbuild::Result& r) {
+        std::string msg{"TEST (" + test_name + "): "};
+        if (r) {
+            ++success_count;
+            msg += "SUCCESS";
+            Cppbuild::log_i(msg, true);
+        } else {
+            msg += "FAILURE with exit code ";
+            msg += std::to_string(r.exit_code());
+            Cppbuild::log_w(msg);
+        }
+    }
+}  // namespace
+
 int main() {
-    Cppbuild::CompileCommand cmd{"clang++"};
-
-    std::string root_dir{Cppbuild::working_dir().string()};
-
-    // NOTE: relative path
-    cmd.add_compiler_arg("-std=c++17");
-    cmd.add_compiler_arg("-I" + root_dir);
-    cmd.set_target_name("cppbuild");
-    cmd.set_build_dir(root_dir + "/build");
+    // Basic CompileCommand template for all tests
+    Cppbuild::CompileCommand cc{"clang++"};
+    cc.set_compiler_args({
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+    });
 
     Cppbuild::log_i("RUNNING TESTS...");
-    Cppbuild::SettingsCollection sc{};
-    sc.display_info = false;
-    Cppbuild::Settings::override_collection(sc);
+    Cppbuild::Settings::set_display_info(false);
 
-    int tests_count{};
-    int success_tests{};
-    for (const auto& i : Cppbuild::Fs::directory_iterator{"."}) {
-        if (!i.is_directory()) {
-            continue;
-        }
+    // All tests source code here
+    std::vector<std::function<void()>> tests_funcs{
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            const std::string test_name{"cppbuild_compilation"};
+            cc.set_compiler_args({
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                // "-Werror",
+                "-pedantic-errors",
+                "-fstrict-flex-arrays=3",
+            });
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
 
-        const Cppbuild::Fs::path path {Cppbuild::Fs::canonical(i)};
-        // Ignore build dir
-        if (path == cmd.build_dir()) {
-            continue;
-        }
+            cc.set_compiler_sources({test_dir + "test.cpp"});
 
-        Cppbuild::Fs::path cppbuild_path{path / "cppbuild.cpp"};
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
 
-        Cppbuild::do_cd(path);
+            // Generate compile_commands
+            cc.set_build_dir("../build/");
+            cc.generate_compile_commands_json();
 
-        if (Cppbuild::Fs::exists(cppbuild_path)) {
-            cmd.set_compiler_sources({cppbuild_path.string()});
+            handle_test_result(test_name, r);
+        },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            const std::string test_name{"add_qt6"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
 
-            Cppbuild::Result r{cmd.do_compile_and_run(true)};
-            std::string msg_prefix {"TEST("};
-            msg_prefix.append(path.stem().string()).append("): ");
-            if (r.is_success()) {
-                Cppbuild::log_i(msg_prefix.append("SUCCESS"), true);
-                ++success_tests;
-            } else {
-                Cppbuild::log_w(msg_prefix.append("FAILURE"));
-            }
+            cc.do_add_package("Qt6Core Qt6Widgets");
+            cc.set_compiler_sources({test_dir + "test.cpp"});
 
-            ++tests_count;
-        } else {
-            Cppbuild::log_w(std::string{path.stem().string()}
-                            + ": Failed to find cppbuild.cpp!"
-                            );
-        }
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
 
-        Cppbuild::do_cd("..");
-    }
+            handle_test_result(test_name, r);
+        },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            const std::string test_name{"compile_commands"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
 
-    Cppbuild::Settings::set_display_info(true);
-    std::string msg{std::to_string(success_tests)};
-    msg.append("/").append(std::to_string(tests_count));
+            cc.add_compiler_arg("-I" + test_dir + "some_dir"),
+            cc.set_compiler_sources({
+                test_dir + "test.cpp",
+                test_dir + "some_dir/some_source.cpp",
+            });
+
+            cc.generate_compile_commands_json();
+
+            Cppbuild::Result r {cc.do_compile_and_run(true)};
+
+            handle_test_result(test_name, r);
+        },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            const std::string test_name{"compile_commands_msvc"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
+
+            cc.add_compiler_arg("-I" + test_dir + "some_dir"),
+            cc.set_compiler_sources({
+                test_dir + "test.cpp",
+                test_dir + "some_dir/some_source.cpp",
+            });
+
+            // Compile with clang
+            cc.do_compile(true);
+
+            cc.set_compiler("msvc");
+            Cppbuild::CompilerArgs msvc_args{
+                "/W4",
+                "/Wpermissive-",
+                "/WX",
+                // Include dir here
+                "/I" + test_dir + "some_dir",
+                "/I" + test_name
+            };
+            cc.set_compiler_args(msvc_args);
+            // Generate compile_commands with msvc compiler
+            cc.generate_compile_commands_json();
+
+            Cppbuild::Result r {cc.do_run(true)};
+
+            handle_test_result(test_name, r);
+        },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            cc.set_compiler_args({});
+            const std::string test_name{"configure_file"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
+
+            cc.set_compiler_sources({test_dir + "test.cpp"});
+
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
+
+            handle_test_result(test_name, r);
+        },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            const std::string test_name{"hello_world"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
+
+            cc.set_compiler_sources({test_dir + "test.cpp"});
+
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
+
+            handle_test_result(test_name, r);
+        },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            const std::string test_name{"qt6_moc"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
+
+            cc.do_add_package("Qt6Core Qt6Widgets");
+            cc.set_compiler_sources({
+                test_dir + "test.cpp",
+                test_dir + "custom_qobject/custom_qobject.cpp",
+            });
+
+            Cppbuild::QtMoc moc{&cc};
+            // TODO(clovis): add Windows support
+#if defined(_WIN32) || defined(_WIN64)
+#else
+            moc.set_compiler("/usr/lib/qt6/moc");
+#endif
+            moc.add_compiler_sources({
+                test_dir + "custom_qobject/custom_qobject.hpp",
+            });
+
+            moc.do_compile(true);
+
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
+
+            handle_test_result(test_name, r);
+        },
+        // Add new tests here
+    };
+
+    // Running tests here
+    Cppbuild::execute_funcs_parallel(tests_funcs);
+
+    // Log final tests results
+    std::string msg{std::to_string(success_count)};
+    msg.append("/").append(std::to_string(tests_funcs.size()));
     msg.append(" tests finished successfully.");
-    Cppbuild::log_i(msg);
+    Cppbuild::log_i(msg, true);
 
-    if (success_tests != tests_count) {
+    if (success_count != tests_funcs.size()) {
         return 1;
     }
 
