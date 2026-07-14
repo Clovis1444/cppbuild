@@ -7,11 +7,12 @@
 
 #pragma once
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -292,6 +293,52 @@ inline Result do_execute_command_weak(const std::string& cmd) {
     return do_execute_command(ShellCommand::WEAK(cmd));
 }
 
+// Executes functions in parallel threads. Order of execution is not defined.
+// If funcs.size() > thread_limit - executes the rest of funcs in the main thread.
+// Finishes when all funcs finish execution.
+inline void execute_funcs_parallel(
+    const std::vector<std::function<void()>>& funcs,
+    const unsigned int thread_limit = Settings::thread_limit()
+) {
+    const size_t threads_size(std::clamp(
+        funcs.size(),
+        size_t{0},
+        static_cast<size_t>(thread_limit == 0 ? 0 : thread_limit - 1)
+    ));
+
+    std::vector<std::thread> threads{};
+    threads.resize(threads_size);
+
+    // Execute funcs
+    try {
+        for (size_t i{0}; i < funcs.size(); ++i) {
+            // Execute in new thread
+            if (i < threads_size) {
+                threads[i] = std::thread{funcs[i]};
+            }
+            // If threads hit thread limit - execute in the main thread
+            else {
+                funcs[i]();
+            }
+        }
+    }
+    // If some of threads throws an exception - let already create threads finish
+    catch (...) {
+        for (auto& thread : threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+        // Re-throw the exception after all threads finish
+        throw;
+    }
+
+    // Waiting for all threads to finish
+    for (std::thread& thread : threads) {
+        thread.join();
+    }
+}
+
 // Executes commands in parallel threads. Order of execution is not defined.
 // If cmds.size() > thread_limit - executes the rest of commands in the main thread.
 // Returns vector of pairs of Cmd - Result.
@@ -311,38 +358,23 @@ inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel(
         return r;
     }
 
-    const size_t threads_size(std::clamp(
-        cmds.size(),
-        size_t{0},
-        static_cast<size_t>(thread_limit == 0 ? 0 : thread_limit - 1)
-    ));
-
-    std::vector<std::thread> threads{};
-    threads.resize(threads_size);
-
-    // Step 1: executing commands
+    // Step 1: populate funcs vector
+    std::vector<std::function<void()>> funcs{};
+    funcs.reserve(cmds.size());
     for (size_t i{0}; i < cmds.size(); ++i) {
-        ShellCommand cmd{cmds[i]};
-        // Important: execute all commands weakly because
-        // we do not want to terminate program before all threads are finished.
-        cmd.weak = true;
-
-        // Execute in new thread
-        if (i < threads_size) {
-            threads[i] = std::thread{[cmd, i, &r](){
-                r[i] = {cmd.cmd, do_execute_command(cmd)};
-            }};
-        }
-        // If threads hit thread limit - execute in the main thread
-        else {
+        std::function<void()> func{[&cmds, i, &r](){
+            ShellCommand cmd{cmds[i]};
+            // Important: execute all commands weakly because
+            // we do not want to terminate program before all threads are finished.
+            cmd.weak = true;
             r[i] = {cmd.cmd, do_execute_command(cmd)};
-        }
+        }};
+
+        funcs.push_back(func);
     }
 
-    // Step 2: waiting for all threads to finish
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
+    // Step 2: executing commands
+    execute_funcs_parallel(funcs, thread_limit);
 
     // Step 3: throw an error if needed
     int failed_cmds_count{};
@@ -375,8 +407,11 @@ inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel(
 
     return r;
 }
-inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_weak(
+// Constructs vector of ShellCommands based on cmd_pattern and passes it to
+// do_execute_commands_parallel(const std::vector<ShellCommand>&,const unsigned int).
+inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel(
     const std::vector<std::string>& cmds,
+    const ShellCommand& cmd_pattern,
     const unsigned int thread_limit = Settings::thread_limit()
 ) {
     if (cmds.empty()) {
@@ -386,28 +421,33 @@ inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_
     std::vector<ShellCommand> shell_cmds{};
     shell_cmds.reserve(cmds.size());
 
+    ShellCommand shell_cmd{cmd_pattern};
     for (const auto& cmd : cmds) {
-        shell_cmds.push_back(ShellCommand::WEAK(cmd));
+        shell_cmd.cmd = cmd;
+        shell_cmds.push_back(shell_cmd);
     }
 
     return do_execute_commands_parallel(shell_cmds, thread_limit);
 }
+// Same as do_execute_commands_parallel(cmds, cmd_pattern, thread_limit), where
+// cmd_pattern is ShellCommand::WEAK("") with silent = true.
+inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_weak(
+    const std::vector<std::string>& cmds,
+    const unsigned int thread_limit = Settings::thread_limit()
+) {
+    ShellCommand cmd_pattern{ShellCommand::WEAK("")};
+    cmd_pattern.silent = true;
+    return do_execute_commands_parallel(cmds, cmd_pattern, thread_limit);
+}
+// Same as do_execute_commands_parallel(cmds, cmd_pattern, thread_limit), where
+// cmd_pattern is ShellCommand::STRONG("") with silent = true.
 inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_strong(
     const std::vector<std::string>& cmds,
     const unsigned int thread_limit = Settings::thread_limit()
 ) {
-    if (cmds.empty()) {
-        return {};
-    }
-
-    std::vector<ShellCommand> shell_cmds{};
-    shell_cmds.reserve(cmds.size());
-
-    for (const auto& cmd : cmds) {
-        shell_cmds.push_back(ShellCommand::STRONG(cmd));
-    }
-
-    return do_execute_commands_parallel(shell_cmds, thread_limit);
+    ShellCommand cmd_pattern{ShellCommand::STRONG("")};
+    cmd_pattern.silent = true;
+    return do_execute_commands_parallel(cmds, cmd_pattern, thread_limit);
 }
 
 // Returns Result::SUCCESS() if directory was created or already exist.
