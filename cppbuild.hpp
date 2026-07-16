@@ -1,14 +1,15 @@
 // NOTE: all functions prefixed with "do_" have side effects(may modify
 // filesystem/execute shell commands).
 //
-// TODO(clovis): add timer functionality
 // TODO(clovis): implement caching for CompileCommand, QtMoc, do_configure_file()
 // TODO(clovis): add download feature
+// TODO(clovis): add target type
 
 #pragma once
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -36,9 +37,51 @@ inline int   pclose(FILE* f) { return ::pclose(f); }
 #endif
 
 namespace Fs = std::filesystem;
+namespace Chr = std::chrono;
 
 using CompilerArgs    = std::set<std::string>;
 using CompilerSources = std::set<std::string>;
+using TimePoint = Chr::steady_clock::time_point;
+template<typename Period = std::ratio<1, 1>>
+using Duration = Chr::duration<double, Period>;
+
+// TODO(clovis): integrate this into Result and do_execute_command
+class Timer {
+public:
+    explicit Timer(const TimePoint& start_point = now())
+    : start_point_{start_point} {}
+
+    // Returns time point from which time is measured.
+    TimePoint start_point() const { return start_point_; }
+    // Sets new start point. Returns elapsed(time_start) from old start point.
+    template<typename Period = std::ratio<1, 1>>
+    Duration<Period> restart(const TimePoint& time_point = now()) {
+        const auto dur{elapsed<Period>(time_point)};
+
+        start_point_ = time_point;
+
+        return dur;
+    }
+
+    static TimePoint now() { return Chr::steady_clock::now(); }
+
+    // Returns elapsed time from start_point() to end_point.
+    template<typename Period = std::ratio<1, 1>>
+    Duration<Period> elapsed(const TimePoint& end_point = now()) const {
+        return end_point - start_point();
+    }
+    template<typename Period = std::ratio<1, 1>>
+    double elapsed_num() const {
+        return elapsed<Period>().count();
+    }
+    template<typename Period = std::ratio<1, 1>>
+    std::string elapsed_str() const {
+        return std::to_string(elapsed<Period>().count());
+    }
+
+private:
+    TimePoint start_point_;
+};
 
 // Represents shell command execution result.
 class Result {
