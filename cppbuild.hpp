@@ -45,6 +45,46 @@ using TimePoint = Chr::steady_clock::time_point;
 template<typename Period = std::ratio<1, 1>>
 using Duration = Chr::duration<double, Period>;
 
+template<typename Period = std::ratio<1, 1>>
+inline std::string duration_str(const Duration<Period>& dur) {
+    int64_t total_ms{Chr::duration_cast<Chr::milliseconds>(dur).count()};
+
+    // Delimeters
+    constexpr int64_t kS{1000};
+    constexpr int64_t kM{60 * kS};
+    constexpr int64_t kH{60 * kM};
+    constexpr int64_t kD{24 * kH};
+
+    const int64_t d{total_ms/kD};
+    total_ms %= kD;
+    const int64_t h{total_ms/kH};
+    total_ms %= kH;
+    const int64_t m{total_ms/kM};
+    total_ms %= kM;
+    const int64_t s{total_ms/1000};
+    const int64_t ms{total_ms%1000};
+
+    std::ostringstream ss;
+    // days
+    if (d) {
+        ss << d << ":";
+    }
+    // hours
+    if (h || !ss.str().empty()) {
+        ss << std::setfill('0') << std::setw(2) << h << ":";
+    }
+    // minutes
+    if (m || !ss.str().empty()) {
+        ss << std::setfill('0') << std::setw(2) << m << ":";
+    }
+    // seconds
+    ss << std::setfill('0') << std::setw(2) << s << ".";
+    // milliseconds
+    ss << ms;
+
+    return ss.str();
+}
+
 // TODO(clovis): integrate this into Result and do_execute_command
 class Timer {
 public:
@@ -76,7 +116,7 @@ public:
     }
     template<typename Period = std::ratio<1, 1>>
     std::string elapsed_str() const {
-        return std::to_string(elapsed<Period>().count());
+        return duration_str(elapsed<Period>());
     }
 
 private:
