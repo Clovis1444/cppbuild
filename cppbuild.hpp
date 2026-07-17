@@ -80,12 +80,11 @@ inline std::string duration_str(const Duration<Period>& dur) {
     // seconds
     ss << std::setfill('0') << std::setw(2) << s << ".";
     // milliseconds
-    ss << ms;
+    ss << std::setfill('0') << std::setw(3) << ms;
 
     return ss.str();
 }
 
-// TODO(clovis): integrate this into Result and do_execute_command
 class Timer {
 public:
     explicit Timer(const TimePoint& start_point = now())
@@ -126,12 +125,19 @@ private:
 // Represents shell command execution result.
 class Result {
 public:
-    explicit Result(int exit_code) :exit_code_{exit_code} {}
-    Result(int exit_code, std::string_view output) :Result{exit_code} {
+    explicit Result(int exit_code, const Duration<>& dur = {})
+    :exit_code_{exit_code}, dur_{dur} {}
+
+    Result(int exit_code, std::string_view output, const Duration<>& dur = {})
+    :Result{exit_code, dur} {
         output_ = output;
     }
-    explicit Result(bool success) :exit_code_{success?kSuccess:kFailure} {}
-    Result(bool success, std::string_view output) :Result{success} {
+
+    explicit Result(bool success, const Duration<>& dur = {})
+    :exit_code_{success?kSuccess:kFailure}, dur_{dur} {}
+
+    Result(bool success, std::string_view output, const Duration<>& dur = {})
+    :Result{success, dur} {
         output_ = output;
     }
 
@@ -139,9 +145,20 @@ public:
     explicit operator bool() const { return is_ok(); }
 
     // Returns Result with kSuccess exit_code.
-    static Result SUCCESS() { return Result{kSuccess}; }
+    static Result SUCCESS(const Duration<>& dur = {}) { return Result {kSuccess, dur}; }
     // Returns Result with kFailure exit_code.
-    static Result FAILURE() { return Result{kFailure}; }
+    static Result FAILURE(const Duration<>& dur = {}) { return Result{kFailure, dur}; }
+
+    Result plus_dur(const Duration<>& dur) {
+        Result r{*this};
+        r.dur_ += dur;
+        return r;
+    }
+    Result with_dur(const Duration<>& dur) {
+        Result r{*this};
+        r.dur_ = dur;
+        return r;
+    }
 
     int exit_code() const { return exit_code_; }
     // Returns if result is success. Returns false otherwise.
@@ -154,11 +171,17 @@ public:
     // Returns command output if there is any.
     std::string output() const { return output_; }
 
+    // Returns command duration.
+    Duration<> dur() const { return dur_; }
+    // Returns command duration as std::string.
+    std::string dur_str() const { return duration_str(dur_); }
+
     static constexpr int kSuccess{EXIT_SUCCESS};
     static constexpr int kFailure{EXIT_FAILURE};
 private:
     int exit_code_;
     std::string output_;
+    Duration<> dur_{};
 };
 
 // Represents how command will be executed.
@@ -323,6 +346,8 @@ static void log_e(std::string_view text, bool force_display = false) {
 // If cmd.cmd is an empty string - returns Result::SUCCESS().
 // Throws an error on failure if cmd.weak = false.
 inline Result do_execute_command(const ShellCommand& cmd) {
+    Timer t{};
+
     if (cmd.cmd.empty()){
         return Result::SUCCESS();
     }
@@ -354,14 +379,16 @@ inline Result do_execute_command(const ShellCommand& cmd) {
 
     // Get cmd exit code
     int exit_status{Cppbuild::pclose(f)};
+    Duration<> cmd_dur{t.elapsed()};
     int exit_code{WEXITSTATUS(exit_status)};
 
-    Result r{exit_code, cmd_output};
+    Result r{exit_code, cmd_output, cmd_dur};
     // Throw error
     if (!cmd.weak && r.is_failure()) {
         Cppbuild::log_e(
             cmd.cmd + ": command failed with exit code "
             + std::to_string(r.exit_code())
+            + " in " + r.dur_str() + "."
         );
     }
 
@@ -535,6 +562,8 @@ inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel_
 
 // Returns Result::SUCCESS() if directory was created or already exist.
 inline Result do_mkdir(const Fs::path& dir_path) {
+    Timer t{};
+
     if (Fs::exists(dir_path) && Fs::is_directory(dir_path)) {
         return Result::SUCCESS();
     }
@@ -543,21 +572,23 @@ inline Result do_mkdir(const Fs::path& dir_path) {
 
     if (Fs::exists(dir_path) && !Fs::is_directory(dir_path)) {
         log_e(std::string{dir_path.string()}.append(": is not a directory"));
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
     try {
         Fs::create_directories(dir_path);
     } catch (const Fs::filesystem_error& e) {
         log_e(std::string{dir_path.string()}.append(": ").append(e.what()));
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
-    return Result::SUCCESS();
+    return Result::SUCCESS(t.elapsed());
 }
 // Removes entry recursively if exists. Returns true if entry was removed or did
 // not exist.
 inline Result do_rm(const Fs::path& path) {
+    Timer t{};
+
     if (!Fs::exists(path)) {
         return Result::SUCCESS();
     }
@@ -568,14 +599,15 @@ inline Result do_rm(const Fs::path& path) {
         Fs::remove_all(path);
     } catch (const Fs::filesystem_error& e) {
         log_e(std::string{path.string()}.append(": ").append(e.what()));
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
     if (Fs::exists(path)) {
         log_e(std::string{"Failed to remove "}.append(path.string()));
+        return Result::FAILURE(t.elapsed());
     }
 
-    return Result::SUCCESS();
+    return Result::SUCCESS(t.elapsed());
 }
 
 // Returns current working directory.
@@ -594,16 +626,19 @@ inline Fs::path full_path(const Fs::path& path) {
 // Changes current working directory. Same as "cd" command.
 // Returns true on success.
 inline Result do_cd(const Fs::path& path) {
+    Timer t{};
+
     log_i(std::string{"Changing working directory to: "}.append(path.string()));
+
     try {
         Fs::current_path(path);
     } catch(const Fs::filesystem_error& e) {
         log_e(std::string{"Failed to change working dir to "}
         .append(path.string()).append(": ").append(e.what()));
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
-    return Result::SUCCESS();
+    return Result::SUCCESS(t.elapsed());
 }
 
 // Returns CFLAGS and linker flags for specified package.
@@ -709,32 +744,34 @@ inline Result do_create_file(
     bool overwrite = false,
     std::ios_base::openmode mode = std::ios_base::out
 ) {
+    Timer t{};
+
     const Fs::path path{full_path(f_path)};
 
     if ((mode & std::ios_base::in) == std::ios_base::in) {
         log_e(path.string() + ": wrong openmode std::ios_base::in");
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
     if (!overwrite && Fs::exists(path)) {
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
     if (Fs::exists(path) && !Fs::is_regular_file(path)) {
         log_e(path.string() + ": is not a regular file");
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
     // Create parent dir.
     if (!do_mkdir(path.parent_path())) {
         log_e(path.string() + ": failed to create parent dir " + path.parent_path().string());
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
     // Create file
     std::ofstream file{path, mode};
     if (!file) {
         log_e(path.string() + ": failed to create/open file");
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
     if (!f_content.empty()) {
@@ -742,10 +779,10 @@ inline Result do_create_file(
     }
     if (!file) {
         log_e(path.string() + ": failed to write file");
-        return Result::FAILURE();
+        return Result::FAILURE(t.elapsed());
     }
 
-    return Result::SUCCESS();
+    return Result::SUCCESS(t.elapsed());
 }
 
 // Returns Result::SUCCESS() if something was written to output_file.
@@ -756,6 +793,8 @@ inline Result do_configure_file(
     // If overwrite is false - return Result::FAILURE() if output_file already exists
     bool overwrite = true
 ) {
+    Timer t{};
+
     if (!overwrite && Fs::exists(output_file)) {
         return Result::FAILURE();
     }
@@ -764,6 +803,7 @@ inline Result do_configure_file(
         return Result::FAILURE();
     }
 
+
     // This may be an empty string
     std::string content{get_file_content(input_file)};
 
@@ -771,7 +811,11 @@ inline Result do_configure_file(
     content = configure_string(content, match);
 
     // Write file
-    return do_create_file(output_file, content, true, std::ios_base::out);
+    Result r{do_create_file(output_file, content, true, std::ios_base::out)};
+    // Update result duration
+    r = r.with_dur(t.elapsed());
+
+    return r;
 }
 
 class CompileCommand {
@@ -1012,6 +1056,8 @@ public:
     // Creates build directory and executes compile command.
     // If weak = true - does not throw an error on failed compilation.
     Result do_compile(bool weak = false) const {
+        Timer t{};
+
         if (compiler().empty()) {
             if (!weak) {
                 log_e("Compiler is not set");
@@ -1063,11 +1109,13 @@ public:
             }
         }
 
+        Duration<> comp_dur{t.elapsed()};
+
         // Step 3: Linking step
         const std::string cmd{linking_cmd()};
-        Result r{weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd)};
+        Result link_r{weak?do_execute_command_weak(cmd):do_execute_command_strong(cmd)};
 
-        return r;
+        return link_r.plus_dur(comp_dur);
     }
 
     Result do_run(bool weak = false) const {
@@ -1086,11 +1134,14 @@ public:
 
     // do_compile() + do_run()
     Result do_compile_and_run(bool weak = false) const {
-        if (!do_compile(weak)) {
-            return Result::FAILURE();
+        Result comp_r{do_compile(weak)};
+        if (!comp_r) {
+            return comp_r;
         }
 
-        return do_run(weak);
+        Result run_r{do_run(weak)};
+
+        return run_r.plus_dur(comp_r.dur());
     }
 
     // Returns Result::SUCCESS() if build directory was created or already exist.
@@ -1104,6 +1155,8 @@ public:
     // Throws error on failure.
     // pkgconf must be installed.
     Result do_add_package(std::string_view package) {
+        Timer t{};
+
         bool msvc_syntax{is_using_msvc()};
 
         std::stringstream args_sstream{do_get_package_args(package, msvc_syntax)};
@@ -1115,12 +1168,12 @@ public:
         }
 
         if (p_args.empty()) {
-            return Result::FAILURE();
+            return Result::FAILURE(t.elapsed());
         }
 
         add_compiler_args(p_args);
 
-        return Result::SUCCESS();
+        return Result::SUCCESS(t.elapsed());
     }
 
     // Returns false if compiler is not defined or not using: "cl" or "msvc"
@@ -1205,24 +1258,27 @@ public:
     // If file already exists - overwrites it.
     // Returns Result::SUCCESS() if file was written without errors.
     Result generate_compile_commands_json() const {
-        if (!do_make_build_dir()) {
-            return Result::FAILURE();
+        Timer t{};
+
+        Result mkdir_r{do_make_build_dir()};
+        if (!mkdir_r) {
+            return mkdir_r;
         }
 
         const std::string file_name{build_dir().append("compile_commands.json").string()};
         std::ofstream file{file_name};
         if (!file) {
             log_w(std::string{file_name}.append(": failed to create file stream"));
-            return Result::FAILURE();
+            return Result::FAILURE(t.elapsed());
         }
 
         file << compile_commands_string();
         if (!file) {
             log_w(std::string{file_name}.append(": failed to write file"));
-            return Result::FAILURE();
+            return Result::FAILURE(t.elapsed());
         }
 
-        return Result::SUCCESS();
+        return Result::SUCCESS(t.elapsed());
     }
 
     // Prints usefull info.
@@ -1384,6 +1440,8 @@ public:
     // If moc exits without errors - add generated source files into parent_command sources.
     // Returns Result::SUCCESS() on success.
     Result do_compile(bool weak = false) {
+        Timer t{};
+
         if (compiler().empty()) {
             if (!weak) {
                 log_e("Moc path is not set");
@@ -1421,11 +1479,16 @@ public:
             do_execute_commands_parallel_weak(cmds, thread_limit):
             do_execute_commands_parallel_strong(cmds, thread_limit)
         };
-        if (!weak) {
-            for ( const auto& result : comp_results) {
-                if (result.second.is_failure()) {
-                    return result.second;
+        for ( const auto& result : comp_results) {
+            if (result.second.is_failure()) {
+                if (!weak) {
+                    log_e(
+                        result.first +
+                        ": failed with exit code " +
+                        std::to_string(result.second.exit_code())
+                    );
                 }
+                return result.second;
             }
         }
 
@@ -1434,7 +1497,7 @@ public:
             parent_command()->add_compiler_sources(moc_output());
         }
 
-        return Result::SUCCESS();
+        return Result::SUCCESS(t.elapsed());
     }
 
     std::string to_moc_output_name(const Fs::path& file_path) const {

@@ -7,16 +7,20 @@ namespace {
         if (r) {
             ++success_count;
             msg += "SUCCESS";
+            msg += " in " + r.dur_str();
             Cppbuild::log_i(msg, true);
         } else {
             msg += "FAILURE with exit code ";
             msg += std::to_string(r.exit_code());
+            msg += " in " + r.dur_str();
             Cppbuild::log_w(msg);
         }
     }
 }  // namespace
 
 int main() {
+    Cppbuild::Timer t{};
+
     // Basic CompileCommand template for all tests
     Cppbuild::CompileCommand cc{"clang++"};
     cc.set_compiler_args({
@@ -195,7 +199,8 @@ int main() {
     // Log final tests results
     std::string msg{std::to_string(success_count)};
     msg.append("/").append(std::to_string(tests_funcs.size()));
-    msg.append(" tests finished successfully.");
+    msg.append(" tests finished successfully");
+    msg.append(" in " + t.elapsed_str() + ".");
     Cppbuild::log_i(msg, true);
 
     if (success_count != tests_funcs.size()) {
