@@ -190,6 +190,35 @@ int main() {
 
             handle_test_result(test_name, r);
         },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            Cppbuild::Timer t{};
+            const std::string test_name{"comp_caching"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
+
+            cc.set_compiler_sources({
+                test_dir + "test.cpp",
+                test_dir + "add_two.cpp",
+            });
+
+            cc.do_clear_build_dir();
+            if (cc.do_get_recompilation_cmds().size() != 2) {
+                handle_test_result(test_name, Cppbuild::Result{1, t.elapsed()});
+                return;
+            }
+
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
+
+            if (cc.do_get_recompilation_cmds().size() != 0) {
+                handle_test_result(test_name, Cppbuild::Result{2, t.elapsed()});
+                return;
+            }
+
+            handle_test_result(test_name, r);
+        },
         // Add new tests here
     };
 

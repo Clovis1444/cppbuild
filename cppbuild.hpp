@@ -1,7 +1,7 @@
 // NOTE: all functions prefixed with "do_" have side effects(may modify
 // filesystem/execute shell commands).
 //
-// TODO(clovis): implement caching for CompileCommand, QtMoc, do_configure_file()
+// TODO(clovis): implement caching for QtMoc, do_configure_file(). Refactor CompileCommand::do_get_recompilation_cmds()
 // TODO(clovis): add download feature
 // TODO(clovis): add target type
 
@@ -212,6 +212,7 @@ struct ShellCommand {
 struct CompilationObj {
     std::string source;
     std::string cmd;
+    std::string dep_cmd;
     std::string output;
 };
 
@@ -222,6 +223,7 @@ struct SettingsCollection {
     bool display_warn{true};
     unsigned int thread_limit{std::thread::hardware_concurrency()};
     bool parallel_compilation{true};
+    bool comp_caching{true};
 };
 // Global Settings class.
 class Settings {
@@ -273,6 +275,27 @@ public:
     static void set_parallel_compilation(bool val) {
         std::lock_guard lock{mtx_};
         sc_.parallel_compilation = val;
+    }
+
+    // Returns max amount of threads that will be used with respect of
+    // parallel_compilation.
+    static unsigned int thread_limit_comp() {
+        std::lock_guard lock{mtx_};
+        unsigned int t_l{
+            sc_.parallel_compilation?
+            sc_.thread_limit:
+            1
+        };
+        return t_l;
+    }
+
+    static bool comp_caching() {
+        std::lock_guard lock{mtx_};
+        return sc_.comp_caching;
+    }
+    static void set_comp_caching(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.comp_caching = val;
     }
 
     // Returns copy of a current SettingsCollection.
@@ -452,6 +475,7 @@ inline void execute_funcs_parallel(
 // Executes commands in parallel threads. Order of execution is not defined.
 // If cmds.size() > thread_limit - executes the rest of commands in the main thread.
 // Returns vector of pairs of Cmd - Result.
+// Order of elements of returned vector is the same as order of cmds.
 inline std::vector<std::pair<std::string, Result>> do_execute_commands_parallel(
     const std::vector<ShellCommand>& cmds,
     const unsigned int thread_limit = Settings::thread_limit()
@@ -866,9 +890,9 @@ public:
     // Returns build_dir() + target_full_name().
     Fs::path target_path() const { return build_dir().append(target_full_name()); }
 
-    // Returns vector of CompilationCmd, containing compile command for each source file.
+    // Returns vector of CompilationObj, containing compile command for each source file.
     // Returns empty vector if no sources were added or compiler was not defined.
-    std::vector<CompilationObj> compilation_cmds() const {
+    std::vector<CompilationObj> compilation_objs() const {
         const CompilerSources& sources{compiler_sources()};
         if (sources.empty() || compiler().empty()) {
             return {};
@@ -882,6 +906,9 @@ public:
             std::string cmd{compiler()};
             cmd.append(" ");
             cmd.append(args);
+
+            std::string dep_cmd{cmd};
+
 #if defined(_WIN32) || defined(_WIN64)
             const std::string src_out_file{Fs::path{source}.filename().string() + ".obj"};
 #else
@@ -894,17 +921,23 @@ public:
                 cmd.append(src_path);
                 cmd.append(" /Fo ");
                 cmd.append(src_out_path);
+
+                // TODO(clovis): Check if this works on msvc
+                dep_cmd.append(" /showIncludes " + src_path);
             } else {
                 cmd.append(" -c ");
                 cmd.append(src_path);
                 cmd.append(" -o ");
                 cmd.append(src_out_path);
+
+                dep_cmd.append(" -MM " + src_path);
             }
 
             std::pair<std::string, std::string> cmd_pair{full_path(source).string(), cmd};
             CompilationObj comp_cmd{};
             comp_cmd.source = src_path;
             comp_cmd.cmd = cmd;
+            comp_cmd.dep_cmd = dep_cmd;
             comp_cmd.output = src_out_path;
 
             cmds.emplace_back(comp_cmd);
@@ -912,11 +945,88 @@ public:
 
         return cmds;
     }
-    // Same as compilation_cmds(), but return vector of CompilationCmd.cmd.
-    std::vector<std::string> compilation_cmds_str() const {
+    // Returns compilation commands for all sources.
+    std::vector<std::string> get_compilation_cmds() const {
         std::vector<std::string> cmds{};
-        for (const auto& cmd : compilation_cmds()) {
-            cmds.push_back(cmd.cmd);
+        for (const auto& obj : compilation_objs()) {
+            cmds.push_back(obj.cmd);
+        }
+
+        return cmds;
+    }
+    // Returns compilation commands only for sources that needs to be recompiled.
+    std::vector<std::string> do_get_recompilation_cmds() const {
+        std::vector<std::string> cmds{};
+
+        std::vector<std::string> obj_to_check_dep_cmd{};
+        std::vector<std::string> obj_to_check_out{};
+        std::vector<std::string> obj_to_check_cmd{};
+
+        for (const auto& obj : compilation_objs()) {
+            if (!Fs::exists(obj.output)) {
+                cmds.push_back(obj.cmd);
+            } else {
+                obj_to_check_dep_cmd.emplace_back(obj.dep_cmd);
+                obj_to_check_out.emplace_back(obj.output);
+                obj_to_check_cmd.emplace_back(obj.cmd);
+            }
+        }
+
+        // Get all dependency headers
+        std::vector<std::pair<std::string, Result>> check_results {
+            do_execute_commands_parallel_strong(obj_to_check_dep_cmd, Settings::thread_limit_comp())
+        };
+
+        for (size_t i{}; i < check_results.size(); ++i) {
+            const auto& r {check_results[i]};
+
+            // Vector of all dependencies that should be checked
+            std::vector<Fs::path> deps_paths{};
+
+            // Step 1: populate deps_paths
+            // msvc
+            if (is_using_msvc()) {
+                // TODO(clovis): handle msvc output here
+                log_e("Not yet implemented for msvc");
+            }
+            // Unix compilers
+            else {
+                std::string data{r.second.output()};
+                // Replace all "\\\n" symbols with space
+                size_t pos{};
+                while ((pos = data.find("\\\n", pos)) != std::string::npos) {
+                    data.replace(pos, 2, " ");
+                    pos += 1;
+                }
+
+                std::istringstream iss{data};
+                std::string token{};
+                bool is_first_token{true};
+                while (iss >> token) {
+                    // Skip source name token
+                    if (is_first_token) {
+                        is_first_token = false;
+                        continue;
+                    }
+                    // Populate path vector
+                    deps_paths.emplace_back(token);
+                }
+            }
+
+            // TODO(clovis): this thing relies on results order.
+            // Probably this whole function should be refactored
+            Fs::path obj_path{obj_to_check_out[i]};
+            // Step 2: check each file time
+            const auto& obj_time {Fs::last_write_time(obj_path)};
+            for (const auto& dep : deps_paths) {
+                const auto& dep_time {Fs::last_write_time(dep)};
+
+                // Check if dep was modified after obj creation
+                if (dep_time > obj_time) {
+                    cmds.emplace_back(obj_to_check_cmd[i]);
+                    break;
+                }
+            }
         }
 
         return cmds;
@@ -1083,7 +1193,12 @@ public:
 
         // TODO(clovis): check if everything works on Windows
         // Step 2: Compilation step
-        std::vector<std::string> cmds{compilation_cmds_str()};
+        std::vector<std::string> cmds{};
+        if (Settings::comp_caching()) {
+            cmds = get_compilation_cmds();
+        } else {
+            cmds = do_get_recompilation_cmds();
+        }
         // Determen whether to use parallel compilation
         const unsigned int thread_limit{
             Settings::parallel_compilation()?
@@ -1202,7 +1317,7 @@ public:
 
     // Returns compile_commands string for the current CompileCommand configuration.
     std::string compile_commands_string(bool enclosed = true) const {
-        std::vector<CompilationObj> cmds {compilation_cmds()};
+        std::vector<CompilationObj> cmds {compilation_objs()};
         if (cmds.empty()) {
             return {};
         }
@@ -1382,7 +1497,7 @@ public:
     }
 
     // Returns vector of compilation commands for each source.
-    std::vector<std::string> compilation_cmds_str() const {
+    std::vector<std::string> get_compilation_cmds() const {
         std::vector<std::string> cmds{};
 
         std::string args{};
@@ -1466,7 +1581,7 @@ public:
         log_i("Running moc...");
 
         // Step 2: Compilation step
-        std::vector<std::string> cmds{compilation_cmds_str()};
+        std::vector<std::string> cmds{get_compilation_cmds()};
         // Determen whether to use parallel compilation
         const unsigned int thread_limit{
             Settings::parallel_compilation()?
