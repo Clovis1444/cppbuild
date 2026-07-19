@@ -1,9 +1,9 @@
 // NOTE: all functions prefixed with "do_" have side effects(may modify
 // filesystem/execute shell commands).
 //
-// TODO(clovis): implement caching for QtMoc, do_configure_file(). Refactor CompileCommand::do_get_recompilation_cmds()
 // TODO(clovis): add download feature
 // TODO(clovis): add target type
+// TODO(clovis): add self recompile feature
 
 #pragma once
 
@@ -809,6 +809,21 @@ inline Result do_create_file(
     return Result::SUCCESS(t.elapsed());
 }
 
+// This function is usefull when you have an output that is determined by the source.
+// Returns true if source last write was AFTER output last wrtite.
+// Returns true if either source or output does not exist.
+// Returns true if any filesystem error occured.
+inline bool is_source_modified(const Fs::path& source, const Fs::path& output) {
+    if (!Fs::exists(source) || !Fs::exists(output)) {
+        return true;
+    }
+    try {
+        return Fs::last_write_time(source) > Fs::last_write_time(output);
+    } catch(...) {
+        return true;
+    }
+}
+
 // Returns Result::SUCCESS() if something was written to output_file.
 inline Result do_configure_file(
     const Fs::path& input_file,
@@ -827,6 +842,10 @@ inline Result do_configure_file(
         return Result::FAILURE();
     }
 
+    // If source does not change - do nothing
+    if (!is_source_modified(input_file, output_file)) {
+        return Result::SUCCESS(t.elapsed());
+    }
 
     // This may be an empty string
     std::string content{get_file_content(input_file)};
@@ -958,27 +977,25 @@ public:
     std::vector<std::string> do_get_recompilation_cmds() const {
         std::vector<std::string> cmds{};
 
-        std::vector<std::string> obj_to_check_dep_cmd{};
-        std::vector<std::string> obj_to_check_out{};
-        std::vector<std::string> obj_to_check_cmd{};
-
+        std::vector<CompilationObj> objs_to_check{};
+        std::vector<std::string> cmds_to_exec{};
         for (const auto& obj : compilation_objs()) {
             if (!Fs::exists(obj.output)) {
                 cmds.push_back(obj.cmd);
             } else {
-                obj_to_check_dep_cmd.emplace_back(obj.dep_cmd);
-                obj_to_check_out.emplace_back(obj.output);
-                obj_to_check_cmd.emplace_back(obj.cmd);
+                objs_to_check.emplace_back(obj);
+                cmds_to_exec.emplace_back(obj.dep_cmd);
             }
         }
 
         // Get all dependency headers
-        std::vector<std::pair<std::string, Result>> check_results {
-            do_execute_commands_parallel_strong(obj_to_check_dep_cmd, Settings::thread_limit_comp())
+        std::vector<std::pair<std::string, Result>> cmds_r {
+            do_execute_commands_parallel_strong(cmds_to_exec, Settings::thread_limit_comp())
         };
 
-        for (size_t i{}; i < check_results.size(); ++i) {
-            const auto& r {check_results[i]};
+        // IMPORTANT: this whole loop relies on deterministic of cmds_r
+        for (size_t i{}; i < cmds_r.size(); ++i) {
+            const auto& r {cmds_r[i]};
 
             // Vector of all dependencies that should be checked
             std::vector<Fs::path> deps_paths{};
@@ -1013,17 +1030,15 @@ public:
                 }
             }
 
-            // TODO(clovis): this thing relies on results order.
-            // Probably this whole function should be refactored
-            Fs::path obj_path{obj_to_check_out[i]};
             // Step 2: check each file time
-            const auto& obj_time {Fs::last_write_time(obj_path)};
+            const CompilationObj& obj{objs_to_check[i]};
+            const auto& obj_time {Fs::last_write_time(obj.output)};
             for (const auto& dep : deps_paths) {
                 const auto& dep_time {Fs::last_write_time(dep)};
 
                 // Check if dep was modified after obj creation
                 if (dep_time > obj_time) {
-                    cmds.emplace_back(obj_to_check_cmd[i]);
+                    cmds.emplace_back(obj.cmd);
                     break;
                 }
             }
@@ -1174,6 +1189,12 @@ public:
             }
             return Result::FAILURE();
         }
+        if (compiler_sources().empty()) {
+            if (!weak) {
+                log_e("Compiler sources is not set");
+            }
+            return Result::FAILURE();
+        }
         if (target_name().empty()) {
             if (!weak) {
                 log_e("Target is not set");
@@ -1199,17 +1220,17 @@ public:
         } else {
             cmds = do_get_recompilation_cmds();
         }
-        // Determen whether to use parallel compilation
-        const unsigned int thread_limit{
-            Settings::parallel_compilation()?
-            Settings::thread_limit():
-            1
-        };
+
+        // If there is nothing to compile and target already exists - skip linking step
+        if (cmds.empty() && Fs::exists(target_path())) {
+            return Result::SUCCESS(t.elapsed());
+        }
+
         // Do actual compilation
         const std::vector<std::pair<std::string, Result>>& comp_results{
             weak?
-            do_execute_commands_parallel_weak(cmds, thread_limit):
-            do_execute_commands_parallel_strong(cmds, thread_limit)
+            do_execute_commands_parallel_weak(cmds, Settings::thread_limit_comp()):
+            do_execute_commands_parallel_strong(cmds, Settings::thread_limit_comp())
         };
         for ( const auto& result : comp_results) {
             if (result.second.is_failure()) {
@@ -1497,23 +1518,31 @@ public:
     }
 
     // Returns vector of compilation commands for each source.
-    std::vector<std::string> get_compilation_cmds() const {
+    std::vector<std::string> get_compilation_cmds(bool comp_caching = Settings::comp_caching()) const {
         std::vector<std::string> cmds{};
+        comp_caching = false;
 
         std::string args{};
         for (const auto& arg : compiler_args()) {
             args.append(arg + ' ');
         }
         for (const auto& source : compiler_sources()) {
+            std::string output{to_moc_output_name(source)};
+
+            // If source was not modified - no need to call moc.
+            if (comp_caching && !is_source_modified(source, output)) {
+                continue;
+            }
+
             std::string cmd{compiler() + " "};
 
             cmd.append(source);
             cmd.append(" -o ");
-            cmd.append(to_moc_output_name(source) + " ");
+            cmd.append(output + " ");
 
             cmd.append(args);
 
-            cmds.push_back(cmd);
+            cmds.emplace_back(cmd);
         }
 
         return cmds;
@@ -1578,21 +1607,19 @@ public:
             }
         }
 
-        log_i("Running moc...");
-
         // Step 2: Compilation step
         std::vector<std::string> cmds{get_compilation_cmds()};
-        // Determen whether to use parallel compilation
-        const unsigned int thread_limit{
-            Settings::parallel_compilation()?
-            Settings::thread_limit():
-            1
-        };
+        if (cmds.empty()) {
+            return Result::SUCCESS(t.elapsed());
+        }
+
+        log_i("Running moc...");
+
         // Do actual compilation
         const std::vector<std::pair<std::string, Result>>& comp_results{
             weak?
-            do_execute_commands_parallel_weak(cmds, thread_limit):
-            do_execute_commands_parallel_strong(cmds, thread_limit)
+            do_execute_commands_parallel_weak(cmds, Settings::thread_limit_comp()):
+            do_execute_commands_parallel_strong(cmds, Settings::thread_limit_comp())
         };
         for ( const auto& result : comp_results) {
             if (result.second.is_failure()) {
