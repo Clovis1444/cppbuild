@@ -3,7 +3,6 @@
 //
 // TODO(clovis): add download feature
 // TODO(clovis): add target type
-// TODO(clovis): add self recompile feature
 
 #pragma once
 
@@ -1670,4 +1669,51 @@ private:
 private:
     CompileCommand* parent_command_{nullptr};
 };
+
+// The purpose of this function is to automatically rebuild cppbuild program if needed.
+// Without this function you manualy do something like this on each project build:
+// clang++ cppbuild.cpp -o cppbuild && ./cppbuild
+//
+// With this function you build your project like this:
+// 1. Do initial build ONCE: clang++ cppbuild.cpp -o cppbuild
+// 2. When you want to rebuild your project justs execute: ./cppbuild
+//
+// The benefit of this is that you do not rebuild your build program
+// every time you need to build your project; also you dont need to
+// to write long compile command every time, you just run cppbuild executable.
+//
+// How to use:
+// Just call DO_SELF_REBUILD() at the beginning of your main function in cppbuild.cpp.
+// IMPORTANT: You should manually rebuild your cppbuild.cpp in this cases:
+// 1. You change something BEFORE DO_SELF_REBUILD() call
+// 2. You pass different parameters of DO_SELF_REBUILD()
+inline void DO_SELF_REBUILD(CompileCommand& cc) {
+    // If rebuild is needed
+    if (!cc.do_get_recompilation_cmds().empty()) {
+        log_i("Rebuilding " + full_path(cc.target_path()).string() + "...");
+
+        Settings::set_display_info(false);
+        const int exit_code{cc.do_compile_and_run(true).exit_code()};
+        Settings::set_display_info(true);
+
+        std::exit(exit_code);
+    }
+}
+// Create CompileCommand and passes it to DO_SELF_REBUILD(CompileCommand&).
+// - sets compiler to compiler;
+// - sets build dir to "build/cppbuild/"
+// - sets compiler sources to sources
+// - sets target name to "../../cppbuild"
+// For more info see DO_SELF_REBUILD(CompileCommand&).
+inline void DO_SELF_REBUILD(
+    const std::string& compiler,
+    const CompilerSources& sources = {"cppbuild.cpp"}
+) {
+    CompileCommand cc{compiler};
+    cc.set_build_dir("build/cppbuild/");
+    cc.set_compiler_sources(sources);
+    cc.set_target_name("../../cppbuild");
+
+    DO_SELF_REBUILD(cc);
+}
 }  // namespace Cppbuild

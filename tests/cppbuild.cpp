@@ -19,6 +19,8 @@ namespace {
 }  // namespace
 
 int main() {
+    Cppbuild::DO_SELF_REBUILD("clang++");
+
     Cppbuild::Timer t{};
 
     // Basic CompileCommand template for all tests
