@@ -249,6 +249,60 @@ int main() {
 
             handle_test_result(test_name, exec_r.with_dur(t.elapsed()));
         },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            Cppbuild::Timer t{};
+            const std::string test_name{"download_raylib"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            cc.set_target_name(test_name + "_test");
+
+            // Fetch raylib from github
+            const Cppbuild::Fs::path cache_dir{test_dir + ".cache/"};
+            const Cppbuild::Fs::path vendor_dir{test_dir + "vendor/"};
+            // TODO(clovis): check if this works on windows. At least uzip should'nt work.
+#if defined(_WIN32) || defined(_WIN64)
+            const std::string raylib_link{"https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_mingw-w64.zip"};
+            const std::string raylib_dir_name{"raylib-6.0_win64_mingw-w64"};
+            const Cppbuild::Fs::path raylib_dir{vendor_dir / raylib_dir_name};
+#else
+            const std::string raylib_link{"https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz"};
+            const std::string raylib_dir_name{"raylib-6.0_linux_amd64"};
+            const Cppbuild::Fs::path raylib_dir{vendor_dir / raylib_dir_name};
+#endif
+
+            Cppbuild::do_rm(vendor_dir);
+            Cppbuild::do_rm(cache_dir);
+
+            if (!Cppbuild::Fs::exists(raylib_dir)) {
+                // Create dir
+                Cppbuild::do_mkdir(vendor_dir);
+                Cppbuild::do_mkdir(cache_dir);
+                // Download using wget
+                const std::string raylib_tar{test_dir + ".cache/raylib.tar.gz"};
+                if (!Cppbuild::Fs::exists(raylib_tar)) {
+                    Cppbuild::do_execute_command_weak(
+                        std::string{"curl -L "} + raylib_link + " -o " + raylib_tar
+                    );
+                }
+                // Extract archive
+                Cppbuild::do_execute_command_weak(
+                    std::string{"tar -xzvf "} + raylib_tar + " -C " + vendor_dir.string()
+                );
+            }
+            cc.set_compiler_sources({test_dir + "test.cpp"});
+            cc.add_compiler_args({
+                "-I" + (raylib_dir / "include").string(),
+                "-L" + (raylib_dir / "lib").string(),
+                "-lraylib",
+                "-Wl,-rpath='$ORIGIN/../vendor/" + raylib_dir_name + "/lib'",
+            });
+
+            Cppbuild::Result r{cc.do_compile_and_run(true)};
+
+            handle_test_result(test_name, r.with_dur(t.elapsed()));
+        },
         // Add new tests here
     };
 
