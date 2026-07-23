@@ -221,6 +221,34 @@ int main() {
 
             handle_test_result(test_name, r);
         },
+////////////////////////////////////////////////////////////////////////////////
+        [cc] () mutable {
+            Cppbuild::Timer t{};
+            const std::string test_name{"shared_lib"};
+            const std::string test_dir{test_name + "/"};
+            cc.add_compiler_arg("-I" + test_name);
+            cc.set_build_dir(test_dir + "build/");
+            Cppbuild::CompileCommand exec_cc{cc};
+            cc.set_target_name("libtest");
+
+            cc.add_compiler_arg("-fPIC");
+            cc.set_compiler_sources({test_dir + "lib.cpp"});
+            cc.set_target_type(Cppbuild::CompileTargetType::SharedLib);
+
+            Cppbuild::Result lib_r{cc.do_compile(true)};
+
+            exec_cc.set_target_name(test_name + "_test");
+            exec_cc.add_compiler_args({
+                "-L" + exec_cc.build_dir().string(),
+                "-l:" + cc.target_full_name(),
+                "-Wl,-rpath,'$ORIGIN'",
+            });
+            exec_cc.set_compiler_sources({test_dir + "test.cpp"});
+
+            Cppbuild::Result exec_r{exec_cc.do_compile_and_run(true)};
+
+            handle_test_result(test_name, exec_r.with_dur(t.elapsed()));
+        },
         // Add new tests here
     };
 

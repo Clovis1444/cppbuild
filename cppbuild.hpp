@@ -2,7 +2,6 @@
 // filesystem/execute shell commands).
 //
 // TODO(clovis): add download feature
-// TODO(clovis): add target type
 
 #pragma once
 
@@ -860,6 +859,13 @@ inline Result do_configure_file(
     return r;
 }
 
+enum class CompileTargetType {
+    Executable,
+    // You probably want to add "-fPIC" arg if you are using unix compiler
+    // when building shared library
+    SharedLib,
+};
+
 class CompileCommand {
 public:
     CompileCommand() = default;
@@ -870,6 +876,7 @@ public:
 
     const std::string& compiler() const { return c_path_; }
     const std::string& target_name() const { return target_name_; }
+    CompileTargetType target_type() const { return target_type_; }
     const CompilerArgs& compiler_args() const { return c_args_; }
     std::string compiler_args_str(bool strip_linker_flags = false) const {
         std::string args{};
@@ -894,13 +901,24 @@ public:
 
         return full_path(build_dir_);
     }
-    // On Windows return target_name() + ".exe"(if target_name() does not provide it).
-    // On other platforms just returns target_name().
+    // If target_type() == Executable:
+    //   On Windows return target_name() + ".exe"(if target_name() does not provide it).
+    //   On other platforms just returns target_name().
+    // If target_type() == SharedLib:
+    //   On Windows return target_name() + ".dll".
+    //   On other platforms returns target_name() + ".so".
     std::string target_full_name() const {
         std::string t_name{target_name()};
 #if defined(_WIN32) || defined(_WIN64)
-        if (!Fs::path{t_name}.has_extension()) {
+        if (target_type() == CompileTargetType::SharedLib) {
+            t_name.append(".dll");
+        }
+        else if (!Fs::path{t_name}.has_extension()) {
             t_name.append(".exe");
+        }
+#else
+        if (target_type() == CompileTargetType::SharedLib) {
+            t_name.append(".so");
         }
 #endif
         return t_name;
@@ -917,6 +935,7 @@ public:
         }
 
         const std::string args{compiler_args_str(true)};
+
         std::vector<CompilationObj> cmds{};
         cmds.reserve(sources.size());
 
@@ -1055,7 +1074,16 @@ public:
 
         std::string cmd{compiler()};
         cmd.append(" ");
+
         cmd.append(compiler_args_str());
+        if (target_type() == CompileTargetType::SharedLib) {
+            if (is_using_msvc()) {
+                cmd.append(" /DLL");
+            } else {
+                cmd.append(" -shared");
+            }
+        }
+
         for (const auto& source : compiler_sources()) {
 #if defined(_WIN32) || defined(_WIN64)
             const std::string src_out_file{Fs::path{source}.filename().string() + ".obj"};
@@ -1086,6 +1114,10 @@ public:
 
     void set_target_name(std::string_view target_name) {
         target_name_ = target_name;
+    }
+
+    void set_target_type(const CompileTargetType& type) {
+        target_type_ = type;
     }
 
     // Overrides compiler args.
@@ -1254,6 +1286,10 @@ public:
     }
 
     Result do_run(bool weak = false) const {
+        if (target_type() != CompileTargetType::Executable) {
+            return Result::SUCCESS();
+        }
+
         log_i(std::string{"Running target: "}.append(target_path().string()));
 
         if (!Fs::exists(target_path())) {
@@ -1270,7 +1306,7 @@ public:
     // do_compile() + do_run()
     Result do_compile_and_run(bool weak = false) const {
         Result comp_r{do_compile(weak)};
-        if (!comp_r) {
+        if (!comp_r || target_type() != CompileTargetType::Executable) {
             return comp_r;
         }
 
@@ -1443,6 +1479,7 @@ private:
 private:
     std::string c_path_;
     std::string target_name_;
+    CompileTargetType target_type_{CompileTargetType::Executable};
     CompilerArgs c_args_;
     CompilerSources c_sources_;
     std::string build_dir_{"build"};
