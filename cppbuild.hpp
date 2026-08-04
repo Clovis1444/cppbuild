@@ -222,6 +222,9 @@ struct SettingsCollection {
     unsigned int thread_limit{std::thread::hardware_concurrency()};
     bool parallel_compilation{true};
     bool comp_caching{true};
+    bool log_prefix_enabled{true};
+    bool log_prefix_colored{true};
+    bool log_text_colored{true};
 };
 // Global Settings class.
 class Settings {
@@ -295,6 +298,31 @@ public:
         std::lock_guard lock{mtx_};
         sc_.comp_caching = val;
     }
+    
+    static bool log_prefix_enabled() {
+        std::lock_guard lock{mtx_};
+        return sc_.log_prefix_enabled;
+    }
+    static void set_log_prefix_enabled(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.log_prefix_enabled = val;
+    }
+    static bool log_prefix_colored() {
+        std::lock_guard lock{mtx_};
+        return sc_.log_prefix_colored;
+    }
+    static void set_log_prefix_colored(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.log_prefix_colored = val;
+    }
+    static bool log_text_clored() {
+        std::lock_guard lock{mtx_};
+        return sc_.log_text_colored;
+    }
+    static void set_log_text_colored(bool val) {
+        std::lock_guard lock{mtx_};
+        sc_.log_text_colored = val;
+    }
 
     // Returns copy of a current SettingsCollection.
     static SettingsCollection get_collection_copy() {
@@ -330,21 +358,48 @@ static void log(LogType lt, std::string_view text, bool force_display = false) {
     if (do_not_display_info || do_not_display_warn ) {
         return;
     }
+    
+    static const std::map<LogType, std::string_view> kPrefixTexts{
+        {LogType::Info,    "[INFO]"},
+        {LogType::Warning, "[WARNING]"},
+        {LogType::Error,   "[Error]"},
+    };
+    // Note(clovis): Color format is \033[38;2<r>;<g>;<b>m
+    static const std::map<LogType, std::string_view> kPrefixColors{
+        {LogType::Info,    "\033[38;2;100;180;255m"},
+        {LogType::Warning, "\033[38;2;255;220;50m"},
+        {LogType::Error,   "\033[38;2;255;100;100m"},
+    };
+    static const std::map<LogType, std::string_view> kTextColors{
+        {LogType::Info,    "\033[38;2;180;220;255m"},
+        {LogType::Warning, "\033[38;2;255;240;150m"},
+        {LogType::Error,   "\033[38;2;255;150;150m"},
+    };
+    static constexpr std::string_view kResetColor{"\033[0m"};
+    
+    std::string log_msg;
 
-    std::string_view prefix;
-    switch (lt) {
-        case LogType::Info:
-            prefix = "[cppbuild INFO] ";
-            break;
-        case LogType::Warning:
-            prefix = "[cppbuild WARNING] ";
-            break;
-        case LogType::Error:
-            prefix = "[cppbuild ERROR] ";
-            break;
+    if (Settings::log_prefix_enabled()) {
+        if (Settings::log_prefix_colored()) {
+            log_msg += kPrefixColors.at(lt);
+            log_msg += kPrefixTexts.at(lt);
+            log_msg += kResetColor;
+        } else {
+            log_msg += kPrefixTexts.at(lt);
+        }
+
+        log_msg += ' ';
     }
 
-    std::cout << prefix << text << '\n' << std::flush;
+    if (Settings::log_text_clored()) {
+        log_msg += kTextColors.at(lt);
+        log_msg += text;
+        log_msg += kResetColor;
+    } else {
+        log_msg += text;
+    }
+
+    std::cout << log_msg << '\n' << std::flush;
 
     if (lt == LogType::Error) {
         std::exit(1);
