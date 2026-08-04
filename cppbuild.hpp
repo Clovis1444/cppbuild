@@ -364,6 +364,7 @@ static void log(LogType lt, std::string_view text, bool force_display = false) {
         {LogType::Warning, "[WARNING]"},
         {LogType::Error,   "[Error]"},
     };
+    // TODO(clovis): add Settings entry for this?
     // Note(clovis): Color format is \033[38;2<r>;<g>;<b>m
     static const std::map<LogType, std::string_view> kPrefixColors{
         {LogType::Info,    "\033[38;2;100;180;255m"},
