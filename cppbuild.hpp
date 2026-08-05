@@ -979,8 +979,19 @@ public:
 #endif
         return t_name;
     }
-    // Returns build_dir() + target_full_name().
-    Fs::path target_path() const { return build_dir().append(target_full_name()); }
+    // If target_full_name() is absolute - returns its full path.
+    // Otherwise, returns full path of build_dir() + target_full_name().
+    Fs::path target_path() const { 
+        Fs::path target_name{target_full_name()};
+        if (target_name.is_absolute()) {
+            return full_path(target_name);
+       }
+        
+        return full_path(build_dir().append(target_name.string()));
+    }
+    
+    // Returns full dir path of target_path().
+    Fs::path target_dir_path() const { return target_path().parent_path(); }
 
     // Returns vector of CompilationObj, containing compile command for each source file.
     // Returns empty vector if no sources were added or compiler was not defined.
@@ -1007,23 +1018,23 @@ public:
 #else
             const std::string src_out_file{Fs::path{source}.filename().string() + ".o"};
 #endif
-            const std::string src_out_path{build_dir().append(src_out_file).string()};
+            const std::string src_out_path{full_path(build_dir().append(src_out_file)).string()};
             const std::string src_path{full_path(source).string()};
             if (is_using_msvc()) {
-                cmd.append(" /c ");
-                cmd.append(src_path);
-                cmd.append(" /Fo ");
-                cmd.append(src_out_path);
+                cmd.append(" /c:");
+                cmd += "\"" + src_path + "\""; // enclosed path
+                cmd.append(" /Fo:");
+                cmd += "\"" + src_out_path + "\""; // enclosed path
 
-                // TODO(clovis): Check if this works on msvc
+                // TODO(clovis): this does not work(it needs the full command with args), it generates a lot of bloat
                 dep_cmd.append(" /showIncludes " + src_path);
             } else {
                 cmd.append(" -c ");
-                cmd.append(src_path);
+                cmd += "\"" + src_path + "\"";
                 cmd.append(" -o ");
-                cmd.append(src_out_path);
+                cmd += "\"" + src_out_path + "\"";
 
-                dep_cmd.append(" -MM " + src_path);
+                dep_cmd.append(" -MM \"" + src_path + "\"");
             }
 
             std::pair<std::string, std::string> cmd_pair{full_path(source).string(), cmd};
@@ -1146,17 +1157,16 @@ public:
 #else
             const std::string src_out_file{Fs::path{source}.filename().string() + ".o"};
 #endif
-            const std::string src_out_path{build_dir().append(src_out_file).string()};
+            const std::string src_out_path{full_path(build_dir().append(src_out_file)).string()};
 
-            cmd.append(" ");
-            cmd.append(src_out_path);
+            cmd += " \"" + src_out_path + "\"";
         }
         if (is_using_msvc()) {
-            cmd.append(" /Fe \"");
-            cmd.append(target_path().string() + "\"");
+            cmd.append(" /Fe:");
+            cmd += "\"" + target_path().string() + "\"";
         } else {
             cmd.append(" -o ");
-            cmd.append(target_path().string());
+            cmd += "\"" + target_path().string() + "\"";
         }
 
         return cmd;
@@ -1289,23 +1299,25 @@ public:
             return Result::FAILURE();
         }
 
-        // Step 1: Build dir step
-        if (!Fs::exists(build_dir())) {
-            Result r{do_make_build_dir()};
-            if (r.is_failure()) {
-                return r;
-            }
+        // Step 1: Build dir and target dir step
+        Result build_dir_r{do_make_build_dir()};
+        if (build_dir_r.is_failure()) {
+            return build_dir_r;
+        }
+        Result target_dir_r{do_mkdir(target_dir_path())};
+        if (target_dir_r.is_failure()) {
+            return target_dir_r;
         }
 
-        log_i(std::string{"Compiling target: "}.append(target_name()));
+        log_i(std::string{"Compiling target: "}.append(target_path().string()));
 
-        // TODO(clovis): check if everything works on Windows
         // Step 2: Compilation step
         std::vector<std::string> cmds{};
-        if (Settings::comp_caching()) {
-            cmds = get_compilation_cmds();
-        } else {
+        // TODO(clovis): comp_caching is not support for msvc for now
+        if (Settings::comp_caching() && !is_using_msvc()) {
             cmds = do_get_recompilation_cmds();
+        } else {
+            cmds = get_compilation_cmds();
         }
 
         // If there is nothing to compile and target already exists - skip linking step
@@ -1612,7 +1624,6 @@ public:
     // Returns vector of compilation commands for each source.
     std::vector<std::string> get_compilation_cmds(bool comp_caching = Settings::comp_caching()) const {
         std::vector<std::string> cmds{};
-        comp_caching = false;
 
         std::string args{};
         for (const auto& arg : compiler_args()) {
@@ -1628,9 +1639,9 @@ public:
 
             std::string cmd{compiler() + " "};
 
-            cmd.append(source);
+            cmd += "\"" + source + "\"";
             cmd.append(" -o ");
-            cmd.append(output + " ");
+            cmd += "\"" + output + "\" ";
 
             cmd.append(args);
 
@@ -1692,11 +1703,9 @@ public:
         }
 
         // Step 1: Build dir step
-        if (!Fs::exists(build_dir())) {
-            Result r{do_make_build_dir()};
-            if (r.is_failure()) {
-                return r;
-            }
+        Result build_dir_r{do_make_build_dir()};
+        if (build_dir_r.is_failure()) {
+            return build_dir_r;
         }
 
         // Step 2: Compilation step
@@ -1780,7 +1789,12 @@ private:
 // IMPORTANT: You should manually rebuild your cppbuild.cpp in this cases:
 // 1. You change something BEFORE DO_SELF_REBUILD() call
 // 2. You pass different parameters of DO_SELF_REBUILD()
+// TODO(clovis): for now this feature is not supported on windows because
+// windows does not allow to overwrite currently running exe file
 inline void DO_SELF_REBUILD(CompileCommand& cc) {
+#if defined(_WIN32) || defined(_WIN64)
+    return;
+#endif
     // If rebuild is needed
     if (!cc.do_get_recompilation_cmds().empty()) {
         log_i("Rebuilding " + full_path(cc.target_path()).string() + "...");
@@ -1807,6 +1821,13 @@ inline void DO_SELF_REBUILD(
     cc.set_compiler_sources(sources);
     cc.set_target_name("../../cppbuild");
 
+    log_i("Recomp cmds:");
+    for (const auto& i: cc.do_get_recompilation_cmds()) {
+        log_i(i);
+    }
+    log_i("Linking cmd:");
+    log_i(cc.linking_cmd());
+    
     DO_SELF_REBUILD(cc);
 }
 }  // namespace Cppbuild
