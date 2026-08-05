@@ -364,7 +364,6 @@ static void log(LogType lt, std::string_view text, bool force_display = false) {
         {LogType::Warning, "[WARNING]"},
         {LogType::Error,   "[Error]"},
     };
-    // TODO(clovis): add Settings entry for this?
     // Note(clovis): Color format is \033[38;2<r>;<g>;<b>m
     static const std::map<LogType, std::string_view> kPrefixColors{
         {LogType::Info,    "\033[38;2;100;180;255m"},
@@ -1021,20 +1020,20 @@ public:
             const std::string src_out_path{full_path(build_dir().append(src_out_file)).string()};
             const std::string src_path{full_path(source).string()};
             if (is_using_msvc()) {
-                cmd.append(" /c:");
-                cmd += "\"" + src_path + "\""; // enclosed path
-                cmd.append(" /Fo:");
-                cmd += "\"" + src_out_path + "\""; // enclosed path
+                cmd.append(" /c ");
+                cmd += src_path; // enclosed path
+                cmd.append(" /Fo ");
+                cmd += src_out_path; // enclosed path
 
                 // TODO(clovis): this does not work(it needs the full command with args), it generates a lot of bloat
                 dep_cmd.append(" /showIncludes " + src_path);
             } else {
                 cmd.append(" -c ");
-                cmd += "\"" + src_path + "\"";
+                cmd += src_path;
                 cmd.append(" -o ");
-                cmd += "\"" + src_out_path + "\"";
+                cmd += src_out_path;
 
-                dep_cmd.append(" -MM \"" + src_path + "\"");
+                dep_cmd.append(" -MM " + src_path);
             }
 
             std::pair<std::string, std::string> cmd_pair{full_path(source).string(), cmd};
@@ -1159,14 +1158,14 @@ public:
 #endif
             const std::string src_out_path{full_path(build_dir().append(src_out_file)).string()};
 
-            cmd += " \"" + src_out_path + "\"";
+            cmd += " " + src_out_path;
         }
         if (is_using_msvc()) {
-            cmd.append(" /Fe:");
-            cmd += "\"" + target_path().string() + "\"";
+            cmd.append(" /Fe ");
+            cmd += target_path().string();
         } else {
             cmd.append(" -o ");
-            cmd += "\"" + target_path().string() + "\"";
+            cmd += target_path().string();
         }
 
         return cmd;
@@ -1460,22 +1459,26 @@ public:
             // directory
             str += "\"directory\": ";
             str += "\"";
-            str += working_dir().string();
+            // str += working_dir().string();
+            str += working_dir().generic_string();
             str += "\",\n";
             // file
             str += "\"file\": ";
             str += "\"";
-            str += file;
+            // str += file;
+            str += Fs::path{file}.generic_string();
             str += "\",\n";
             // command
             str += "\"command\": ";
             str += "\"";
-            str += it->cmd;
+            // str += it->cmd;
+            str += Fs::path{it->cmd}.generic_string();
             str += "\",\n";
             // output
             str += "\"output\": ";
             str += "\"";
-            str += it->output;
+            // str += it->output;
+            str += Fs::path{it->output}.generic_string();
             str += "\"\n";
 
             str.append("}");
@@ -1532,7 +1535,6 @@ public:
 
 private:
     static bool is_linker_flag(const std::string& flag) {
-        // TODO(clovis): ensure this list is exhaustive
         // Check if starts with
         bool r{
             flag.find("-l")       == 0 ||
@@ -1639,9 +1641,9 @@ public:
 
             std::string cmd{compiler() + " "};
 
-            cmd += "\"" + source + "\"";
+            cmd += source;
             cmd.append(" -o ");
-            cmd += "\"" + output + "\" ";
+            cmd += output + " ";
 
             cmd.append(args);
 
@@ -1820,13 +1822,6 @@ inline void DO_SELF_REBUILD(
     cc.set_build_dir("build/cppbuild/");
     cc.set_compiler_sources(sources);
     cc.set_target_name("../../cppbuild");
-
-    log_i("Recomp cmds:");
-    for (const auto& i: cc.do_get_recompilation_cmds()) {
-        log_i(i);
-    }
-    log_i("Linking cmd:");
-    log_i(cc.linking_cmd());
     
     DO_SELF_REBUILD(cc);
 }
