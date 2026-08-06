@@ -1,6 +1,7 @@
 // NOTE: all functions prefixed with "do_" have side effects(may modify
 // filesystem/execute shell commands).
 //
+// TODO(clovis): Enclose all paths in double quotes to make it compatible on all shells (paths with whitespaces is the issue)
 // TODO(clovis): add download feature
 
 #pragma once
@@ -13,9 +14,9 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <list>
 #include <map>
 #include <mutex>
-#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -24,6 +25,25 @@
 #include <vector>
 
 namespace Cppbuild {
+
+enum class OS {
+    Linux,
+    Windows,
+    Unknown,
+};
+inline OS os() {
+#if defined(_WIN32) || defined(_WIN64)
+    return OS::Windows;
+#elif defined(__linux__) || defined(linux) || defined(__gnu_linux__)
+    return OS::Linux;
+#else
+    return OS::Unknown;
+#endif
+}
+inline bool is_os(const OS& os) { return Cppbuild::os() == os; }
+inline bool is_os_windows()     { return os() == OS::Windows; }
+inline bool is_os_linux()       { return os() == OS::Linux; }
+inline bool is_os_unknown()     { return os() == OS::Unknown; }
 
 #if defined(_WIN32) || defined(_WIN64)
 inline int WEXITSTATUS(int exit_status) { return exit_status; }
@@ -37,8 +57,8 @@ inline int   pclose(FILE* f) { return ::pclose(f); }
 namespace Fs = std::filesystem;
 namespace Chr = std::chrono;
 
-using CompilerArgs    = std::set<std::string>;
-using CompilerSources = std::set<std::string>;
+using CompilerArgs    = std::list<std::string>;
+using CompilerSources = std::list<std::string>;
 using TimePoint = Chr::steady_clock::time_point;
 template<typename Period = std::ratio<1, 1>>
 using Duration = Chr::duration<double, Period>;
@@ -1021,9 +1041,9 @@ public:
             const std::string src_path{full_path(source).string()};
             if (is_using_msvc()) {
                 cmd.append(" /c ");
-                cmd += src_path; // enclosed path
+                cmd += src_path;
                 cmd.append(" /Fo ");
-                cmd += src_out_path; // enclosed path
+                cmd += src_out_path;
 
                 // TODO(clovis): this does not work(it needs the full command with args), it generates a lot of bloat
                 dep_cmd.append(" /showIncludes " + src_path);
@@ -1139,9 +1159,7 @@ public:
         }
 
         std::string cmd{compiler()};
-        cmd.append(" ");
 
-        cmd.append(compiler_args_str());
         if (target_type() == CompileTargetType::SharedLib) {
             if (is_using_msvc()) {
                 cmd.append(" /DLL");
@@ -1168,6 +1186,9 @@ public:
             cmd += target_path().string();
         }
 
+        
+        cmd.append(" " + compiler_args_str());
+
         return cmd;
     }
 
@@ -1193,8 +1214,7 @@ public:
         }
     }
     // Inserts arg into compiler args list.
-    // Returns false if arg was already present.
-    bool add_compiler_arg(const std::string& c_arg) {
+    void add_compiler_arg(const std::string& c_arg) {
         // Trim prefixed whitespaces
         int str_start_index{0};
         for (int i{0}; i < static_cast<int>(c_arg.size()); ++i) {
@@ -1203,34 +1223,23 @@ public:
                 break;
             }
         }
-        return c_args_.insert(c_arg.substr(str_start_index)).second;
+        c_args_.emplace_back(c_arg.substr(str_start_index));
     }
     // Inserts args into compiler args list.
-    // Returns false if at least one source was already present.
-    bool add_compiler_args(const CompilerArgs& c_args) {
-        bool result{true};
+    void add_compiler_args(const CompilerArgs& c_args) {
         for (const auto& arg : c_args) {
-            if (!add_compiler_arg(arg)) {
-                result = false;
-            }
+            add_compiler_arg(arg);
         }
-        return result;
     }
     // Erases arg from compiler args list.
-    // Returns false if arg was present.
-    bool remove_compiler_arg(const std::string& c_arg) {
-        return c_args_.erase(c_arg) > 0;
+    void remove_compiler_arg(const std::string& c_arg) {
+        c_args_.remove(c_arg);
     }
     // Erases args from compiler args list.
-    // Returns false if at least one arg was not present.
-    bool remove_compiler_args(const CompilerArgs& c_args) {
-        bool result{true};
+    void remove_compiler_args(const CompilerArgs& c_args) {
         for (const auto& arg : c_args) {
-            if (!remove_compiler_arg(arg)) {
-                result = false;
-            }
+            remove_compiler_arg(arg);
         }
-        return result;
     }
 
     // Overrides compiler sources.
@@ -1238,36 +1247,24 @@ public:
         c_sources_ = c_sources;
     }
     // Inserts source into compiler sources list.
-    // Returns false if source was already present.
-    bool add_compiler_source(const std::string& c_source) {
-        return c_sources_.insert(c_source).second;
+    void add_compiler_source(const std::string& c_source) {
+        c_sources_.emplace_back(c_source);
     }
     // Inserts sources into compiler sources list.
-    // Returns false if at least one source was already present.
-    bool add_compiler_sources(const CompilerSources& c_sources) {
-        bool result{true};
+    void add_compiler_sources(const CompilerSources& c_sources) {
         for (const auto& source : c_sources) {
-            if (!add_compiler_source(source)) {
-                result = false;
-            }
+            add_compiler_source(source);
         }
-        return result;
     }
     // Erases source from compiler sources list.
-    // Returns false if source was not present.
-    bool remove_compiler_source(const std::string& c_source) {
-        return c_sources_.erase(c_source) > 0;
+    void remove_compiler_source(const std::string& c_source) {
+        c_sources_.remove(c_source);
     }
     // Erases sources from compiler sources list.
-    // Returns false if at least one source was not present.
-    bool remove_compiler_sources(const CompilerSources& c_sources) {
-        bool result{true};
+    void remove_compiler_sources(const CompilerSources& c_sources) {
         for (const auto& source : c_sources) {
-            if (!remove_compiler_source(source)) {
-                result = false;
-            }
+            remove_compiler_source(source);
         }
-        return result;
     }
 
     void set_build_dir(std::string_view build_dir) { build_dir_ = build_dir; }
@@ -1402,7 +1399,7 @@ public:
         std::string arg{};
         CompilerArgs p_args{};
         while(args_sstream >> arg) {
-            p_args.insert(arg);
+            p_args.emplace_back(arg);
         }
 
         if (p_args.empty()) {
@@ -1609,15 +1606,15 @@ public:
                 if (arg[0] == '/') {
                     std::string unix_arg{arg};
                     unix_arg[0] = '-';
-                    moc_args.insert(unix_arg);
+                    moc_args.emplace_back(unix_arg);
                 } else {
-                    moc_args.insert(arg);
+                    moc_args.emplace_back(arg);
                 }
             }
         }
 
         if (parent_command()->is_using_msvc()) {
-            moc_args.insert("--compiler-flavor msvc");
+            moc_args.emplace_back("--compiler-flavor msvc");
         }
 
         return moc_args;
@@ -1659,7 +1656,7 @@ public:
         CompilerSources moc_out{};
 
         for (const auto& input : compiler_sources()) {
-            moc_out.insert(to_moc_output_name(input));
+            moc_out.emplace_back(to_moc_output_name(input));
         }
 
         return moc_out;
@@ -1762,13 +1759,14 @@ public:
 
 private:
     // Clears all moc output from parent sources.
-    // Returns false if at least one source was not present or parent is nullptr.
+    // Returns false if parent is nullptr.
     bool clear_parent() const {
         if (!parent_command_) {
             return false;
         }
 
-        return parent_command_->remove_compiler_sources(moc_output());
+        parent_command_->remove_compiler_sources(moc_output());
+        return true;
     }
 private:
     CompileCommand* parent_command_{nullptr};

@@ -69,9 +69,10 @@ int main() {
         },
         ////////////////////////////////////////////////////////////////////////////////
         [cc]() mutable {
-#if defined(_WIN32) || defined(_WIN64)
-            return;
-#endif
+            if (Cppbuild::is_os_windows()) {
+                return;
+            }
+            
             const std::string test_name{"add_qt6"};
             const std::string test_dir{test_name + "/"};
             cc.add_compiler_arg("-I" + test_name);
@@ -170,9 +171,9 @@ int main() {
         },
         ////////////////////////////////////////////////////////////////////////////////
         [cc]() mutable {
-#if defined(_WIN32) || defined(_WIN64)
-            return;
-#endif
+            if (Cppbuild::is_os_windows()) {
+                return;
+            }
             const std::string test_name{"qt6_moc"};
             const std::string test_dir{test_name + "/"};
             cc.add_compiler_arg("-I" + test_name);
@@ -256,51 +257,41 @@ int main() {
         },
         ////////////////////////////////////////////////////////////////////////////////
         [cc]() mutable {
-#if defined(_WIN32) || defined(_WIN64)
-            return;
-#endif
-            // TODO(clovis): refactor this test with vendor dir
             Cppbuild::Timer t{};
-            const std::string test_name{"download_raylib"};
+            const std::string test_name{"raylib_vendor"};
             const std::string test_dir{test_name + "/"};
             cc.add_compiler_arg("-I" + test_name);
             cc.set_build_dir(test_dir + "build/");
             cc.set_target_name(test_name + "_test");
 
-            // Fetch raylib from github
-            const Cppbuild::Fs::path cache_dir{test_dir + ".cache/"};
-            const Cppbuild::Fs::path vendor_dir{test_dir + "vendor/"};
-            
-            const std::string raylib_link{"https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz"};
-            const std::string raylib_dir_name{"raylib-6.0_linux_amd64"};
-            const Cppbuild::Fs::path raylib_dir{vendor_dir / raylib_dir_name};
-
-            Cppbuild::do_rm(vendor_dir);
-            Cppbuild::do_rm(cache_dir);
-
-            if (!Cppbuild::Fs::exists(raylib_dir)) {
-                // Create dir
-                Cppbuild::do_mkdir(vendor_dir);
-                Cppbuild::do_mkdir(cache_dir);
-                // Download using wget
-                const std::string raylib_tar{test_dir + ".cache/raylib.tar.gz"};
-                if (!Cppbuild::Fs::exists(raylib_tar)) {
-                    Cppbuild::do_execute_command_weak(
-                        std::string{"curl -L "} + raylib_link + " -o " + raylib_tar
-                    );
-                }
-                // Extract archive
-                Cppbuild::do_execute_command_weak(
-                    std::string{"tar -xzvf "} + raylib_tar + " -C " + vendor_dir.string()
-                );
+            std::string raylib_dir_postfix;
+            switch (Cppbuild::os()) {
+            case Cppbuild::OS::Linux:
+                raylib_dir_postfix = "vendor/linux/raylib";
+                break;
+            case Cppbuild::OS::Windows:
+                raylib_dir_postfix = "vendor/windows/raylib";
+                break;
+            case Cppbuild::OS::Unknown:
+                return;
+                break;
             }
+            const Cppbuild::Fs::path raylib_dir{test_dir + raylib_dir_postfix};
+            
             cc.set_compiler_sources({test_dir + "test.cpp"});
             cc.add_compiler_args({
                 "-I" + (raylib_dir / "include").string(),
                 "-L" + (raylib_dir / "lib").string(),
                 "-lraylib",
-                "-Wl,-rpath='$ORIGIN/../vendor/" + raylib_dir_name + "/lib'",
+                "-Wl,-rpath='$ORIGIN/../" + raylib_dir_postfix + "/lib'",
             });
+            // Raylib's windows specific dependencies
+            if (Cppbuild::is_os_windows()) {
+                cc.add_compiler_args({
+                    "-lgdi32",
+                    "-lwinmm",
+                });
+            }
 
             Cppbuild::Result r{cc.do_compile_and_run(true)};
 
