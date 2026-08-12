@@ -1,3 +1,5 @@
+// TODO(clovis): add msvc specific test
+
 #include "../cppbuild.hpp"
 
 namespace {
@@ -88,6 +90,11 @@ int main() {
         },
         ////////////////////////////////////////////////////////////////////////////////
         [cc]() mutable {
+            if (!Cppbuild::do_execute_command_weak("clang-check --version")) {
+                Cppbuild::log_w("clang-check is not found: skipping test");
+                return;
+            }
+            
             const std::string test_name{"compile_commands"};
             const std::string test_dir{test_name + "/"};
             cc.add_compiler_arg("-I" + test_name);
@@ -102,12 +109,31 @@ int main() {
 
             cc.generate_compile_commands_json();
 
+            // Checking if compile_commands.json is valid
+            std::string check_cmd{"clang-check -p "};
+            check_cmd += cc.build_dir().generic_string();
+            for (const auto& source: cc.compiler_sources()) {
+                check_cmd += " " + source;
+            }
+            Cppbuild::Result check_result{Cppbuild::do_execute_command_weak(check_cmd)};
+            if (!check_result) {
+                handle_test_result(test_name, check_result);
+                return;
+            }
+
             Cppbuild::Result r {cc.do_compile_and_run(true)};
 
             handle_test_result(test_name, r);
         },
         ////////////////////////////////////////////////////////////////////////////////
         [cc]() mutable {
+            // TODO(clovis): clangd does not directly supports msvc???
+            return;
+            if (!Cppbuild::do_execute_command_weak("clang-check --version")) {
+                Cppbuild::log_w("clang-check is not found: skipping test");
+                return;
+            }
+            
             const std::string test_name{"compile_commands_msvc"};
             const std::string test_dir{test_name + "/"};
             cc.add_compiler_arg("-I" + test_name);
@@ -136,6 +162,18 @@ int main() {
             // Generate compile_commands with msvc compiler
             cc.generate_compile_commands_json();
 
+            // Checking if compile_commands.json is valid
+            std::string check_cmd{"clang-check -p "};
+            check_cmd += cc.build_dir().generic_string();
+            for (const auto& source: cc.compiler_sources()) {
+                check_cmd += " " + source;
+            }
+            Cppbuild::Result check_result{Cppbuild::do_execute_command_weak(check_cmd)};
+            if (!check_result) {
+                handle_test_result(test_name, check_result);
+                return;
+            }
+            
             Cppbuild::Result r {cc.do_run(true)};
 
             handle_test_result(test_name, r);

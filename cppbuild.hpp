@@ -1,7 +1,6 @@
 // NOTE: all functions prefixed with "do_" have side effects(may modify
 // filesystem/execute shell commands).
 //
-// TODO(clovis): Enclose all paths in double quotes to make it compatible on all shells (paths with whitespaces is the issue)
 // TODO(clovis): add download feature
 
 #pragma once
@@ -230,6 +229,7 @@ struct ShellCommand {
 struct CompilationObj {
     std::string source;
     std::string cmd;
+    std::string cmd_json;
     std::string dep_cmd;
     std::string output;
 };
@@ -1027,39 +1027,50 @@ public:
 
         for (const auto& source : compiler_sources()) {
             std::string cmd{compiler()};
+            std::string cmd_json{};
+            
             cmd.append(" ");
             cmd.append(args);
 
             std::string dep_cmd{cmd};
 
 #if defined(_WIN32) || defined(_WIN64)
-            const std::string src_out_file{Fs::path{source}.filename().string() + ".obj"};
+            const std::string src_out_file{Fs::path{source}.filename().generic_string() + ".obj"};
 #else
-            const std::string src_out_file{Fs::path{source}.filename().string() + ".o"};
+            const std::string src_out_file{Fs::path{source}.filename().generic_string() + ".o"};
 #endif
-            const std::string src_out_path{full_path(build_dir().append(src_out_file)).string()};
-            const std::string src_path{full_path(source).string()};
+            const std::string src_out_path{full_path(build_dir().append(src_out_file)).generic_string()};
+            const std::string src_path{full_path(source).generic_string()};
             if (is_using_msvc()) {
-                cmd.append(" /c ");
-                cmd += src_path;
-                cmd.append(" /Fo ");
-                cmd += src_out_path;
+                cmd.append(" /c:");
+                cmd_json = cmd;
+                cmd += "\"" + src_path + "\"";
+                cmd_json += "\\\"" + src_path + "\\\"";
+                cmd.append(" /Fo:");
+                cmd_json.append(" /Fo:");
+                cmd += "\"" + src_out_path + "\"";
+                cmd_json += "\\\"" + src_out_path + "\\\"";
 
                 // TODO(clovis): this does not work(it needs the full command with args), it generates a lot of bloat
-                dep_cmd.append(" /showIncludes " + src_path);
+                dep_cmd.append(" /showIncludes \"" + src_path + "\"");
             } else {
                 cmd.append(" -c ");
-                cmd += src_path;
+                cmd_json = cmd;
+                cmd += "\"" + src_path + "\"";
+                cmd_json += "\\\"" + src_path + "\\\"";
                 cmd.append(" -o ");
-                cmd += src_out_path;
+                cmd_json.append(" -o ");
+                cmd += "\"" + src_out_path + "\"";
+                cmd_json += "\\\"" + src_out_path + "\\\"";
 
-                dep_cmd.append(" -MM " + src_path);
+                dep_cmd.append(" -MM \"" + src_path + "\"");
             }
 
-            std::pair<std::string, std::string> cmd_pair{full_path(source).string(), cmd};
+            std::pair<std::string, std::string> cmd_pair{full_path(source).generic_string(), cmd};
             CompilationObj comp_cmd{};
             comp_cmd.source = src_path;
             comp_cmd.cmd = cmd;
+            comp_cmd.cmd_json = cmd_json;
             comp_cmd.dep_cmd = dep_cmd;
             comp_cmd.output = src_out_path;
 
@@ -1170,22 +1181,20 @@ public:
 
         for (const auto& source : compiler_sources()) {
 #if defined(_WIN32) || defined(_WIN64)
-            const std::string src_out_file{Fs::path{source}.filename().string() + ".obj"};
+            const std::string src_out_file{Fs::path{source}.filename().generic_string() + ".obj"};
 #else
-            const std::string src_out_file{Fs::path{source}.filename().string() + ".o"};
+            const std::string src_out_file{Fs::path{source}.filename().generic_string() + ".o"};
 #endif
-            const std::string src_out_path{full_path(build_dir().append(src_out_file)).string()};
+            const std::string src_out_path{full_path(build_dir().append(src_out_file)).generic_string()};
 
-            cmd += " " + src_out_path;
+            cmd += " \"" + src_out_path + "\"";
         }
         if (is_using_msvc()) {
-            cmd.append(" /Fe ");
-            cmd += target_path().string();
+            cmd.append(" /Fe:");
         } else {
             cmd.append(" -o ");
-            cmd += target_path().string();
         }
-
+        cmd += "\"" + target_path().generic_string() + "\"";
         
         cmd.append(" " + compiler_args_str());
 
@@ -1309,7 +1318,7 @@ public:
 
         // Step 2: Compilation step
         std::vector<std::string> cmds{};
-        // TODO(clovis): comp_caching is not support for msvc for now
+        // TODO(clovis): comp_caching is not supported for msvc for now
         if (Settings::comp_caching() && !is_using_msvc()) {
             cmds = do_get_recompilation_cmds();
         } else {
@@ -1456,25 +1465,21 @@ public:
             // directory
             str += "\"directory\": ";
             str += "\"";
-            // str += working_dir().string();
             str += working_dir().generic_string();
             str += "\",\n";
             // file
             str += "\"file\": ";
             str += "\"";
-            // str += file;
             str += Fs::path{file}.generic_string();
             str += "\",\n";
             // command
             str += "\"command\": ";
             str += "\"";
-            // str += it->cmd;
-            str += Fs::path{it->cmd}.generic_string();
+            str += it->cmd_json;
             str += "\",\n";
             // output
             str += "\"output\": ";
             str += "\"";
-            // str += it->output;
             str += Fs::path{it->output}.generic_string();
             str += "\"\n";
 
@@ -1638,9 +1643,9 @@ public:
 
             std::string cmd{compiler() + " "};
 
-            cmd += source;
+            cmd += "\"" + source + "\"";
             cmd.append(" -o ");
-            cmd += output + " ";
+            cmd += "\"" + output + "\" ";
 
             cmd.append(args);
 
